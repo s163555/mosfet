@@ -44,6 +44,49 @@ MARK_WIDTH = 10.0
 LABEL_HEIGHT = 60.0       # Size of the coordinate text
 LABEL_LAYER = 49          # Same as Metal (to be visible)
 
+# Layer Definitions
+def generate_layer_properties(output_gds_path):
+    # This defines the visual style (Name, Layer, Datatype, Color)
+    # Formats: (Name, Layer, Datatype, HexColor, FillPattern)
+    # Fill patterns: 1=Solid, 3=Slash, 5=Cross, etc.
+    layers_config = [
+        ("ACTIVE",   43, 0, "#0000FF", 1), # Blue
+        ("IMPLANT",  45, 0, "#00FF00", 5), # Green Empty
+        ("POLY",     46, 0, "#FF0000", 3), # Red Slash
+        ("CONTACT",  47, 0, "#000000", 1), # Black
+        ("METAL",    49, 0, "#CC8800", 1), # Gold
+        ("WAFER",    90, 0, "#808080", 5), # Gray Outline
+        ("TEXT",     91, 0, "#000000", 0)  # Text
+    ]
+    
+    lyp_path = output_gds_path.replace(".gds", ".lyp")
+    
+    with open(lyp_path, "w") as f:
+        f.write('&lt;?xml version="1.0" encoding="utf-8"?&gt;\n')
+        f.write('&lt;layer-properties&gt;\n')
+        
+        for name, lay, dt, color, dither in layers_config:
+            f.write(' &lt;properties&gt;\n')
+            f.write(f'  &lt;frame-color&gt;{color}&lt;/frame-color&gt;\n')
+            f.write(f'  &lt;fill-color&gt;{color}&lt;/fill-color&gt;\n')
+            f.write(f'  &lt;frame-brightness&gt;0&lt;/frame-brightness&gt;\n')
+            f.write(f'  &lt;fill-brightness&gt;0&lt;/fill-brightness&gt;\n')
+            f.write(f'  &lt;dither-pattern&gt;I{dither}&lt;/dither-pattern&gt;\n')
+            f.write(f'  &lt;line-style/&gt;\n')
+            f.write(f'  &lt;valid&gt;true&lt;/valid&gt;\n')
+            f.write(f'  &lt;visible&gt;true&lt;/visible&gt;\n')
+            f.write(f'  &lt;transparent&gt;false&lt;/transparent&gt;\n')
+            f.write(f'  &lt;width/&gt;\n')
+            f.write(f'  &lt;marked&gt;false&lt;/marked&gt;\n')
+            f.write(f'  &lt;xfill&gt;false&lt;/xfill&gt;\n')
+            f.write(f'  &lt;animation&gt;0&lt;/animation&gt;\n')
+            f.write(f'  &lt;name&gt;{name} ({lay}/{dt})&lt;/name&gt;\n')
+            f.write(f'  &lt;source&gt;{lay}/{dt}@1&lt;/source&gt;\n')
+            f.write(' &lt;/properties&gt;\n')
+            
+        f.write('&lt;/layer-properties&gt;\n')
+    print(f"Layer properties written to: {lyp_path}")
+
 # -------------------------------------------------
 # Load Source
 # -------------------------------------------------
@@ -261,7 +304,9 @@ t.size = um(2000)
 wafer_top.shapes(L_TXT).insert(t)
 
 ly.write(OUT_GDS)
+generate_layer_properties(OUT_GDS)
 print(f"Wafer generated: {OUT_GDS}")
 print(f"Total Dies: {placed_count}")
-print(f"Flat Position: Y &lt; {flat_y_level:.2f} um")</text>
+print(f"Flat Position: Y &lt; {flat_y_level:.2f} um")
+</text>
 </klayout-macro>
