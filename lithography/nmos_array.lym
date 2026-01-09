@@ -221,6 +221,16 @@ def draw_nmos(cell, x0, y0, L, W):
         (tap_x, pb_y),
         (tap_x, tap_y)
     ], WIRE_WIDTH)
+    
+    # Device label
+    label_text = f"L={L} W={W}"
+    generator = pya.TextGenerator.default_generator()
+    text_region = generator.text(label_text, layout.dbu, 12.0)
+    text_bbox = text_region.bbox()
+    text_width = text_bbox.width() * layout.dbu
+    t_text = pya.Trans(um(x - text_width/2.0), um(y + 120.0))
+    text_region.transform(t_text)
+    top.shapes(L_METAL).insert(text_region)
 
 # -------------------------------------------------
 # Array Generation
