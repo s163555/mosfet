@@ -28,7 +28,7 @@ SRC_GDS = os.path.join(script_dir, "nmos_array.gds")
 OUT_GDS = os.path.join(script_dir, "nmos_array_wafer.gds")
 
 # Wafer &amp; Dicing Specs
-WAFER_DIA_UM = 100000.0   # 100 mm
+WAFER_DIA_UM = 150000.0   # 150 mm
 EDGE_EXCLUSION = 3000.0   # 3 mm
 SCRIBE_GAP = 100.0        # Width of the street between dies
 
@@ -49,7 +49,14 @@ die = ly.top_cell()
 # -------------------------------------------------
 # Auto-detect Die Size
 # -------------------------------------------------
-bbox = die.bbox()
+l_metal_idx = ly.layer(49, 0)
+bbox = die.bbox_per_layer(l_metal_idx)
+
+# If for some reason Metal is empty, fallback to full bbox
+if bbox.empty():
+    print("Warning: No metal found, falling back to full bbox")
+    bbox = die.bbox()
+
 die_w_dbu = bbox.width()
 die_h_dbu = bbox.height()
 
@@ -65,7 +72,7 @@ step_y_um = die_h_um + SCRIBE_GAP
 # -------------------------------------------------
 # Setup Wafer Cell
 # -------------------------------------------------
-wafer_top = ly.create_cell("WAFER_100MM")
+wafer_top = ly.create_cell("WAFER_150MM")
 
 # Layers
 L_OUT   = ly.layer(90, 0)   # Wafer Outline
@@ -147,7 +154,11 @@ for i in range(-max_col, max_col + 1):
         if corners_in:
             # 1. Place the Die
             # Adjust origin to center the die at cx, cy
-            trans = pya.Trans(um(cx - hw), um(cy - hh))
+            shift_x = cx - bbox.center().x * ly.dbu
+            shift_y = cy - bbox.center().y * ly.dbu
+            
+            trans = pya.Trans(um(shift_x), um(shift_y))
+            wafer_top.insert(pya.CellInstArray(die.cell_index(), trans))
             wafer_top.insert(pya.CellInstArray(die.cell_index(), trans))
             placed_count += 1
             
