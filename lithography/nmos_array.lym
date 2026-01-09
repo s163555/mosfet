@@ -38,7 +38,6 @@ def um(x):
 # -------------------------------------------------
 # Layers
 # -------------------------------------------------
-# Assumptions:
 # L_IMPLANT present = N+ (Source/Drain)
 # L_IMPLANT absent  = P+ (Substrate Tap)
 L_ACTIVE  = layout.layer(43, 0)
@@ -49,25 +48,28 @@ L_METAL   = layout.layer(49, 0)
 L_TEXT    = layout.layer(100, 0)
 
 # -------------------------------------------------
-# Technology parameters (µm)
+# Technology parameters (µm) - CONSERVATIVE RULES
 # -------------------------------------------------
-# Device specifics
-POLY_OVERHANG = 4.0        # Extended slightly to give room for gate contact
-ACTIVE_EXTENSION = 4.0     # Length of source/drain diffusion beyond gate
-CONTACT_SIZE = 4.0         # Slightly larger for reliability
-CONTACT_SPACING = 4.0
-METAL_ENC = 2.0            # Metal enclosure of contact
+# 1. Contact &amp; Enclosure
+CONTACT_SIZE = 5.0         # As requested (5x5)
+LANDING_PAD_SIZE = 15.0    # 5um contact + 5um margin on all sides
+WIRE_WIDTH = 15.0          # Matching the pad size for robust routing
 
-# Calculated widths
-GATE_CONTACT_HEAD_W = CONTACT_SIZE + 2 * METAL_ENC
+# 2. Device Geometry
+ACTIVE_EXTENSION = 6.0     # Extra space for Source/Drain contacts
+POLY_EXT_ON_FIELD = 6.0    # How far Poly extends onto field before contacting
+POLY_OVERHANG = 3.0        # How far Poly extends past Active (safety margin)
 
-# Pad specifics (Large probe pads)
+# 3. Body Tap
+TAP_DISTANCE = 15.0        # Distance from Transistor to Body Tap
+
+# 4. Pads
 PAD_WIDTH = 100.0
 PAD_HEIGHT = 100.0
-PAD_SPACING = 80.0         # INCREASED: Gives room for routing without clipping
+PAD_SPACING = 80.0 
 
 # -------------------------------------------------
-# Helper: Draw a centered rectangle
+# Helpers
 # -------------------------------------------------
 def draw_box(cell, layer, x_center, y_center, w, h):
     box = pya.Box(
@@ -77,184 +79,163 @@ def draw_box(cell, layer, x_center, y_center, w, h):
     cell.shapes(layer).insert(box)
     return box
 
-# -------------------------------------------------
-# Helper: Create Manhattan Path (Wire)
-# -------------------------------------------------
 def draw_wire(cell, layer, points, width):
-    # Convert list of tuples [(x1,y1), (x2,y2)] to pya.Points
     pya_points = [pya.Point(um(x), um(y)) for x, y in points]
     path = pya.Path(pya_points, um(width))
-    # Square ends to match the pads nicely
     path.begin_ext = um(width / 2)
     path.end_ext = um(width / 2)
     cell.shapes(layer).insert(path)
 
 # -------------------------------------------------
-# NMOS DUT (Device Under Test)
+# NMOS DUT
 # -------------------------------------------------
 def draw_nmos_dut(cell, x0, y0, L, W):
     
-    # --- 1. Draw Probe Pads (2x2 Configuration) ---
-    # Centered roughly around x0,y0 but pushed out by spacing
-    offset_x = (PAD_WIDTH + PAD_SPACING) / 2
-    offset_y = (PAD_HEIGHT + PAD_SPACING) / 2
+    # --- 1. Draw Probe Pads ---
+    # S=TopLeft, D=TopRight, G=BotLeft, B=BotRight
+    px_offset = (PAD_WIDTH + PAD_SPACING) / 2
+    py_offset = (PAD_HEIGHT + PAD_SPACING) / 2
     
     pads = {
-        "S": (x0 - offset_x, y0 + offset_y), # Source: Top-Left
-        "D": (x0 + offset_x, y0 + offset_y), # Drain:  Top-Right
-        "G": (x0 - offset_x, y0 - offset_y), # Gate:   Bottom-Left
-        "B": (x0 + offset_x, y0 - offset_y)  # Bulk:   Bottom-Right
+        "S": (x0 - px_offset, y0 + py_offset),
+        "D": (x0 + px_offset, y0 + py_offset),
+        "G": (x0 - px_offset, y0 - py_offset),
+        "B": (x0 + px_offset, y0 - py_offset)
     }
 
     for name, (px, py) in pads.items():
         draw_box(cell, L_METAL, px, py, PAD_WIDTH, PAD_HEIGHT)
 
-    # --- 2. Draw Central Transistor ---
-    # Orientation: Current Horizontal. Source Left, Drain Right.
+    # --- 2. Transistor Core ---
     
-    # Active Area (Diffusion)
+    # Active Area
     act_w = L + 2 * ACTIVE_EXTENSION
     act_h = W
     draw_box(cell, L_ACTIVE, x0, y0, act_w, act_h)
-    draw_box(cell, L_IMPLANT, x0, y0, act_w, act_h) # N+ Implant
+    draw_box(cell, L_IMPLANT, x0, y0, act_w, act_h) # N+
 
-    # Poly Gate (Vertical Strip)
-    # Extends downwards more to hold the contact
+    # Poly Gate
+    # The gate runs vertically.
+    # Top: Just extends past active. 
+    # Bottom: Extends past active -&gt; onto field -&gt; allows for contact.
+    
     poly_top = y0 + W/2 + POLY_OVERHANG
-    poly_bot = y0 - W/2 - POLY_OVERHANG - GATE_CONTACT_HEAD_W # Extra room for contact
+    # Bottom extends further to accommodate the landing pad on the field oxide
+    poly_bot_edge = y0 - W/2 - POLY_EXT_ON_FIELD - LANDING_PAD_SIZE
     
     poly_box = pya.Box(
-        um(x0 - L/2), um(poly_bot),
+        um(x0 - L/2), um(poly_bot_edge),
         um(x0 + L/2), um(poly_top)
     )
     cell.shapes(L_POLY).insert(poly_box)
 
-    # --- 3. Contacts &amp; Wiring ---
+    # --- 3. Connections ---
 
-    # --- SOURCE (Left) ---
-    src_x = x0 - L/2 - ACTIVE_EXTENSION/2
-    
-    # Calculate number of contacts fitting in W
-    avail_h = W - 2 * METAL_ENC
-    num_cont = int(avail_h // (CONTACT_SIZE + CONTACT_SPACING))
-    if num_cont &lt; 1: num_cont = 1
-    
-    # Draw Source Contacts
-    cont_array_h = num_cont * CONTACT_SIZE + (num_cont - 1) * CONTACT_SPACING
-    start_y = y0 - cont_array_h / 2 + CONTACT_SIZE / 2
-    
-    for k in range(num_cont):
-        cy = start_y + k * (CONTACT_SIZE + CONTACT_SPACING)
-        draw_box(cell, L_CONT, src_x, cy, CONTACT_SIZE, CONTACT_SIZE)
-
-    # Source Wire: Top-Left Pad -&gt; Down -&gt; Right -&gt; Active
-    # We exit the pad from the bottom-right corner area to avoid clipping Gate wire
-    wire_w = GATE_CONTACT_HEAD_W # Consistent width
-    
-    # Pad Edge coords
-    ps_x, ps_y = pads["S"]
-    
-    draw_wire(cell, L_METAL, [
-        (ps_x, ps_y - PAD_HEIGHT/2 + wire_w/2), # Start inside pad
-        (ps_x, y0),                             # Drop down
-        (src_x, y0)                             # Move right to source
-    ], wire_w)
-
-
-    # --- DRAIN (Right) ---
-    drn_x = x0 + L/2 + ACTIVE_EXTENSION/2
-    
-    # Draw Drain Contacts
-    for k in range(num_cont):
-        cy = start_y + k * (CONTACT_SIZE + CONTACT_SPACING)
-        draw_box(cell, L_CONT, drn_x, cy, CONTACT_SIZE, CONTACT_SIZE)
-        
-    # Drain Wire: Top-Right Pad -&gt; Down -&gt; Left -&gt; Active
-    pd_x, pd_y = pads["D"]
-    draw_wire(cell, L_METAL, [
-        (pd_x, pd_y - PAD_HEIGHT/2 + wire_w/2),
-        (pd_x, y0),
-        (drn_x, y0)
-    ], wire_w)
-
-    # --- GATE (Bottom) ---
-    # The user wanted a "consistent width at the interface".
-    # Strategy: Place the contact at the bottom of the poly.
-    # The wire connecting to it will be exactly the width of the contact head.
-    
-    g_cont_y = poly_bot + GATE_CONTACT_HEAD_W / 2
+    # A. GATE CONNECTION (Bottom)
+    # Contact location: Centered on the poly extension we just made
+    g_cont_y = poly_bot_edge + LANDING_PAD_SIZE/2
     g_cont_x = x0
     
-    # Draw Contact
+    # 1. Poly Landing Pad (Widen the poly at the contact point?)
+    # Usually standard poly is fine, but let's ensure the poly under the contact is wide enough.
+    # If L &lt; CONTACT_SIZE, we need to widen the poly head.
+    if L &lt; LANDING_PAD_SIZE:
+        draw_box(cell, L_POLY, g_cont_x, g_cont_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+
+    # 2. Contact
     draw_box(cell, L_CONT, g_cont_x, g_cont_y, CONTACT_SIZE, CONTACT_SIZE)
     
-    # Draw Metal Cap (Interface)
-    draw_box(cell, L_METAL, g_cont_x, g_cont_y, GATE_CONTACT_HEAD_W, GATE_CONTACT_HEAD_W)
+    # 3. Metal Landing Pad (The 15um Safety Rule)
+    draw_box(cell, L_METAL, g_cont_x, g_cont_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
     
-    # Gate Wire: Bottom-Left Pad -&gt; Right -&gt; Gate Contact
+    # 4. Wire to Pad G
     pg_x, pg_y = pads["G"]
-    
-    # Route: Start Pad -&gt; Move Right to center -&gt; Move Up to contact
-    # NOTE: The Source wire is at y=y0. The Gate wire must stay below that.
-    # Since Pad G is at y0 - offset_y, it is well below the device.
-    
     draw_wire(cell, L_METAL, [
-        (pg_x + PAD_WIDTH/2 - wire_w/2, pg_y), # Start inside pad (right edge)
-        (g_cont_x, pg_y),                      # Move Right
-        (g_cont_x, g_cont_y)                   # Move Up to contact
-    ], GATE_CONTACT_HEAD_W) # &lt;--- Matches the contact head width exactly
+        (pg_x + PAD_WIDTH/2, pg_y), # Start at Pad edge
+        (g_cont_x, pg_y),           # Move Right
+        (g_cont_x, g_cont_y)        # Move Up to contact
+    ], WIRE_WIDTH)
 
 
-    # --- BULK / SUBSTRATE (Bottom Right) ---
-    # Purpose: Connect the 4th pad.
-    # Create a P-Tap (Active NO Implant) to the right of the device.
+    # B. SOURCE CONNECTION (Left)
+    # Location: Left side of active area
+    src_x = x0 - L/2 - ACTIVE_EXTENSION/2
     
-    tap_x = x0 + L/2 + ACTIVE_EXTENSION + 20.0 # Place it 20um to the right
-    tap_y = y0 - 30.0 # Slightly below center to be closer to pad
+    # For simplicity in this macro, we will place ONE central landing pad 
+    # to collect the source current, rather than an array of tiny contacts.
+    # This is much safer for alignment.
     
-    tap_size = 10.0
+    # 1. Contact
+    draw_box(cell, L_CONT, src_x, y0, CONTACT_SIZE, CONTACT_SIZE)
     
-    # Draw Tap Active
-    draw_box(cell, L_ACTIVE, tap_x, tap_y, tap_size, tap_size)
-    # Note: We do NOT draw L_IMPLANT here, assuming background is P-type and Implant is N-type.
+    # 2. Metal Landing Pad (15um)
+    draw_box(cell, L_METAL, src_x, y0, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
     
-    # Tap Contacts (2x2 array)
-    draw_box(cell, L_CONT, tap_x - 2, tap_y - 2, CONTACT_SIZE, CONTACT_SIZE)
-    draw_box(cell, L_CONT, tap_x + 2, tap_y - 2, CONTACT_SIZE, CONTACT_SIZE)
-    draw_box(cell, L_CONT, tap_x - 2, tap_y + 2, CONTACT_SIZE, CONTACT_SIZE)
-    draw_box(cell, L_CONT, tap_x + 2, tap_y + 2, CONTACT_SIZE, CONTACT_SIZE)
+    # 3. Wire to Pad S
+    ps_x, ps_y = pads["S"]
+    draw_wire(cell, L_METAL, [
+        (ps_x, ps_y - PAD_HEIGHT/2),
+        (ps_x, y0),
+        (src_x, y0)
+    ], WIRE_WIDTH)
+
+
+    # C. DRAIN CONNECTION (Right)
+    drn_x = x0 + L/2 + ACTIVE_EXTENSION/2
     
-    # Tap Metal Cap
-    draw_box(cell, L_METAL, tap_x, tap_y, tap_size, tap_size)
+    # 1. Contact
+    draw_box(cell, L_CONT, drn_x, y0, CONTACT_SIZE, CONTACT_SIZE)
     
-    # Bulk Wire: Bottom-Right Pad -&gt; Left -&gt; Up -&gt; Tap
+    # 2. Metal Landing Pad
+    draw_box(cell, L_METAL, drn_x, y0, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+    
+    # 3. Wire to Pad D
+    pd_x, pd_y = pads["D"]
+    draw_wire(cell, L_METAL, [
+        (pd_x, pd_y - PAD_HEIGHT/2),
+        (pd_x, y0),
+        (drn_x, y0)
+    ], WIRE_WIDTH)
+
+
+    # D. BODY TAP (Substrate)
+    # This creates a separate Active island connected to Ground (Pad B)
+    # Location: To the right of the main device
+    
+    tap_x = x0 + L/2 + ACTIVE_EXTENSION + TAP_DISTANCE
+    tap_y = y0 
+    
+    # 1. Active Box (NO IMPLANT -&gt; P-Type)
+    draw_box(cell, L_ACTIVE, tap_x, tap_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+    
+    # 2. Contact
+    draw_box(cell, L_CONT, tap_x, tap_y, CONTACT_SIZE, CONTACT_SIZE)
+    
+    # 3. Metal Landing Pad
+    draw_box(cell, L_METAL, tap_x, tap_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+    
+    # 4. Wire to Pad B
     pb_x, pb_y = pads["B"]
-    
     draw_wire(cell, L_METAL, [
-        (pb_x - PAD_WIDTH/2 + wire_w/2, pb_y), # Start inside pad (left edge)
-        (tap_x, pb_y),                         # Move Left
-        (tap_x, tap_y)                         # Move Up
-    ], wire_w)
+        (pb_x - PAD_WIDTH/2, pb_y),
+        (tap_x, pb_y),
+        (tap_x, tap_y)
+    ], WIRE_WIDTH)
 
 # -------------------------------------------------
-# Array definition
+# Array Generation
 # -------------------------------------------------
-# 4x4 Grid as requested
 Ls = [4, 6, 8, 10]
 Ws = [20, 40, 60, 80]
 
-# Increased pitch to accommodate larger Pad Spacing
 DX = 400.0
 DY = 400.0
 
 ORIGIN_X = 0
 ORIGIN_Y = 0
 
-# -------------------------------------------------
-# Draw array + labels
-# -------------------------------------------------
-# Axis Labels
-lbl_L = pya.Text("L -&gt;", pya.Trans(um(ORIGIN_X + DX), um(ORIGIN_Y + 150)))
+# Labels
+lbl_L = pya.Text("L -&gt;", pya.Trans(um(ORIGIN_X + DX), um(ORIGIN_Y + 200)))
 lbl_L.height = um(30)
 top.shapes(L_TEXT).insert(lbl_L)
 
@@ -264,25 +245,17 @@ top.shapes(L_TEXT).insert(lbl_W)
 
 for row, W in enumerate(Ws):
     for col, L in enumerate(Ls):
-
         x = ORIGIN_X + col * DX
         y = ORIGIN_Y - row * DY
-
         draw_nmos_dut(top, x, y, L, W)
-
-        # Label per cell
-        label_t = pya.Trans(
-            um(x),
-            um(y + 120)
-        )
-        text = pya.Text(f"L={L} W={W}", label_t)
+        
+        # Text Label
+        t = pya.Trans(um(x), um(y + 120))
+        text = pya.Text(f"L={L} W={W}", t)
         text.height = um(10)
-        text.halign = 1 
+        text.halign = 1
         top.shapes(L_TEXT).insert(text)
 
-# -------------------------------------------------
-# Save
-# -------------------------------------------------
 layout.write(OUTPUT_PATH)
-print(f"Wrote {OUTPUT_PATH}")</text>
+print(f"Layout written to {OUTPUT_PATH}")</text>
 </klayout-macro>
