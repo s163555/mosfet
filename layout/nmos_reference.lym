@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description/>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <priority>0</priority>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>import pya
+import os
+
+# -------------------------------------------------
+# Configuration
+# -------------------------------------------------
+script_dir = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_PATH = os.path.join(script_dir, "nmos_reference.gds")
+
+layout = pya.Layout()
+layout.dbu = 0.001
+top = layout.create_cell("NMOS_FAT_FET")
+
+def um(x): return int(x / layout.dbu)
+
+# Layers
+L_ACTIVE  = layout.layer(43, 0)
+L_IMPLANT = layout.layer(45, 0)
+L_POLY    = layout.layer(46, 0)
+L_CONT    = layout.layer(47, 0)
+L_METAL   = layout.layer(49, 0)
+
+# FAT FET Geometry
+L_REF = 100.0
+W_REF = 100.0
+
+# Pads
+PAD_WIDTH = 100.0
+PAD_HEIGHT = 100.0
+PAD_SPACING = 250.0  
+
+# -------------------------------------------------
+# Helpers
+# -------------------------------------------------
+def draw_box(cell, layer, x, y, w, h):
+    box = pya.Box(um(x - w/2), um(y - h/2), um(x + w/2), um(y + h/2))
+    cell.shapes(layer).insert(box)
+
+def draw_wire(cell, layer, points, width):
+    pya_pts = [pya.Point(um(x), um(y)) for x, y in points]
+    path = pya.Path(pya_pts, um(width))
+    cell.shapes(layer).insert(path)
+
+# -------------------------------------------------
+# Draw The Fat FET
+# -------------------------------------------------
+x0, y0 = 0, 0
+
+# 1. Pads
+px_off = (PAD_WIDTH + PAD_SPACING) / 2
+py_off = (PAD_HEIGHT + PAD_SPACING) / 2
+pads = {
+    "S": (-px_off, py_off), "D": (px_off, py_off),
+    "G": (-px_off, -py_off), "B": (px_off, -py_off)
+}
+for p in pads.values():
+    draw_box(top, L_METAL, p[0], p[1], PAD_WIDTH, PAD_HEIGHT)
+
+# --- CORRECTION START ---
+# We need enough space for a 10um contact + 5um spacing to Gate + 5um Enclosure
+# Total extension = 20um
+EXTENSION = 20.0
+act_w = L_REF + 2 * EXTENSION 
+act_h = W_REF
+
+# 2. Transistor Core
+draw_box(top, L_ACTIVE, x0, y0, act_w, act_h)
+draw_box(top, L_IMPLANT, x0, y0, act_w, act_h)
+
+# Poly (Vertical Gate)
+poly_ext = 10.0
+draw_box(top, L_POLY, x0, y0, L_REF, W_REF + 2*poly_ext)
+
+# 3. Connections
+# Calculate Contact Centers
+# Center is: (Gate Edge) + (Spacing) + (Half Contact Width)
+# x = 50 + 5 + 5 = 60
+cont_offset = L_REF/2 + 5.0 + 5.0 
+
+# Source (Left)
+s_x = -cont_offset
+draw_box(top, L_CONT, s_x, 0, 10, act_h - 10) 
+# Wire to Pad S
+draw_wire(top, L_METAL, [(pads["S"][0], pads["S"][1]), (s_x, pads["S"][1]), (s_x, 0)], 20)
+
+# Drain (Right)
+d_x = cont_offset
+draw_box(top, L_CONT, d_x, 0, 10, act_h - 10)
+# Wire to Pad D
+draw_wire(top, L_METAL, [(pads["D"][0], pads["D"][1]), (d_x, pads["D"][1]), (d_x, 0)], 20)
+
+# Gate Contact (Bottom)
+g_y = -W_REF/2 - poly_ext/2
+draw_box(top, L_CONT, x0, g_y, 10, 10)
+draw_wire(top, L_METAL, [(pads["G"][0], pads["G"][1]), (x0, pads["G"][1]), (x0, g_y)], 20)
+
+# Body (Right Side Tap)
+# Move tap further out to clear the wider active area
+tap_x = d_x + 30.0
+draw_box(top, L_ACTIVE, tap_x, 0, 20, 20) 
+draw_box(top, L_CONT, tap_x, 0, 10, 10)
+draw_wire(top, L_METAL, [(pads["B"][0], pads["B"][1]), (tap_x, pads["B"][1]), (tap_x, 0)], 20)
+# --- CORRECTION END ---
+
+# 4. Label
+gen = pya.TextGenerator.default_generator()
+text = gen.text(f"REF L={L_REF} W={W_REF}", layout.dbu, 25.0)
+t_trans = pya.Trans(um(-150), um(0)) 
+text.transform(t_trans)
+top.shapes(L_METAL).insert(text)
+
+layout.write(OUTPUT_PATH)
+print(f"Fat FET corrected and written to {OUTPUT_PATH}")</text>
+</klayout-macro>
