@@ -18,7 +18,9 @@ The layout is generated programmatically to ensure precision and scalability. Th
 To run the macro:
 1) Open KLayout.
 2) Go to Macros -> Macro Development.
-3) Import mosfet_gen.lym and click Run.
+3) Import mosfet_array.lym and click Run.
+4) Import mosfet_array_wafer.lym and click Run.
+5) Inspect nmos_array_wafer.gds
 
 ### TCAD Simulation (Silvaco ATHENA)
 Status: In Development Future updates will include .in files to simulate:
