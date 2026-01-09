@@ -89,7 +89,7 @@ def draw_wire(cell, layer, points, width):
 # -------------------------------------------------
 # NMOS DUT
 # -------------------------------------------------
-def draw_nmos_dut(cell, x0, y0, L, W):
+def draw_nmos(cell, x0, y0, L, W):
     
     # --- 1. Draw Probe Pads ---
     # S=TopLeft, D=TopRight, G=BotLeft, B=BotRight
@@ -247,7 +247,7 @@ for row, W in enumerate(Ws):
     for col, L in enumerate(Ls):
         x = ORIGIN_X + col * DX
         y = ORIGIN_Y - row * DY
-        draw_nmos_dut(top, x, y, L, W)
+        draw_nmos(top, x, y, L, W)
         
         # Text Label
         t = pya.Trans(um(x), um(y + 120))
