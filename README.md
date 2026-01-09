@@ -6,7 +6,7 @@ This repository contains the design files, process flow documentation, and TCAD 
 * TCAD Simulations: Predictive modeling using Silvaco ATHENA (Upcoming).
     
 ## Process Overview
-The fabrication follows a standard self-aligned gate process. The specific parameters for oxidation, implantation, and metallization are detailed in the Process_Flow.tex file.
+The fabrication follows a standard self-aligned gate process. The specific parameters for oxidation, implantation, and metallization are detailed in the process flow document.
 
 ## Software & Automation
 ### KLayout Macro (LYM)
