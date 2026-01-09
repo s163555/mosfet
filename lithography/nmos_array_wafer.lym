@@ -23,18 +23,26 @@ import math
 # Configuration
 # -------------------------------------------------
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Assumes the single-die file is named 'nmos_array_corrected.gds'
 SRC_GDS = os.path.join(script_dir, "nmos_array.gds")
 OUT_GDS = os.path.join(script_dir, "nmos_array_wafer.gds")
 
-# Wafer &amp; Dicing Specs
+# Wafer Specs (Siegert Wafer BW16029 - 150mm)
 WAFER_DIA_UM = 150000.0   # 150 mm
-EDGE_EXCLUSION = 3000.0   # 3 mm
+EDGE_EXCLUSION = 3000.0   # 3 mm margin
 SCRIBE_GAP = 100.0        # Width of the street between dies
 
+# SEMI Standard Flat for 150mm Wafer
+# Length is typically 57.5mm +/- 2.5mm
+FLAT_LENGTH_UM = 57500.0  
+FLAT_POSITION = "BOTTOM"  # Primary flat is usually at the bottom for P&lt;100&gt;
+
 # Dicing Mark Specs
-MARK_SIZE = 80.0          # Total length of the cross
-MARK_WIDTH = 10.0         # Thickness of the cross lines
+MARK_SIZE = 80.0          
+MARK_WIDTH = 10.0         
+
+# Text Label Specs
+LABEL_HEIGHT = 60.0       # Size of the coordinate text
+LABEL_LAYER = 49          # Same as Metal (to be visible)
 
 # -------------------------------------------------
 # Load Source
@@ -49,10 +57,10 @@ die = ly.top_cell()
 # -------------------------------------------------
 # Auto-detect Die Size
 # -------------------------------------------------
+# Using Metal (49) to detect the true electrical boundary
 l_metal_idx = ly.layer(49, 0)
 bbox = die.bbox_per_layer(l_metal_idx)
 
-# If for some reason Metal is empty, fallback to full bbox
 if bbox.empty():
     print("Warning: No metal found, falling back to full bbox")
     bbox = die.bbox()
@@ -65,7 +73,7 @@ die_h_um = die_h_dbu * ly.dbu
 
 print(f"Die Size: {die_w_um:.2f} x {die_h_um:.2f} µm")
 
-# The pitch (center-to-center distance)
+# Pitch = Die Size + Scribe Lane
 step_x_um = die_w_um + SCRIBE_GAP
 step_y_um = die_h_um + SCRIBE_GAP
 
@@ -76,38 +84,63 @@ wafer_top = ly.create_cell("WAFER_150MM")
 
 # Layers
 L_OUT   = ly.layer(90, 0)   # Wafer Outline
-L_TXT   = ly.layer(91, 0)   # Text Labels
-L_METAL = ly.layer(49, 0)   # Using Metal for Dicing Marks (High Contrast)
+L_TXT   = ly.layer(91, 0)   # Info Text
+L_METAL = ly.layer(LABEL_LAYER, 0) 
 
 def um(v): 
     return int(round(v / ly.dbu))
 
-# 1. Draw Wafer Visuals
+# -------------------------------------------------
+# Draw Wafer with Flat
+# -------------------------------------------------
+# Calculate the geometric "depth" of the flat
+# R^2 = (Flat_Len/2)^2 + (Dist_to_Center)^2
 R = WAFER_DIA_UM / 2.0
 valid_R = R - EDGE_EXCLUSION
 
-def draw_circle(cell, layer, radius, points=256):
+flat_half_len = FLAT_LENGTH_UM / 2.0
+dist_to_flat = math.sqrt(R*R - flat_half_len*flat_half_len)
+
+# Depending on position, we clip the polygon
+flat_y_level = -dist_to_flat # Bottom flat
+
+def draw_wafer_shape(cell, layer, radius, flat_y, points=360):
     pts = []
     for i in range(points):
         theta = 2 * math.pi * i / points
         x = radius * math.cos(theta)
         y = radius * math.sin(theta)
+        
+        # Clip Y at the flat level
+        if y &lt; flat_y:
+            # Snap to flat (simple approximation)
+            # For exact intersection we would calculate X at flat_y
+            # But for visual guide, simple clamping is usually fine 
+            # or we filter points. Let's filter for better accuracy.
+            continue 
+            
         pts.append(pya.Point(um(x), um(y)))
+    
+    # Close the flat visually
+    # Find start/end of the arc to close the chord
+    # (The polygon logic closes first-to-last automatically, creating the flat line)
     cell.shapes(layer).insert(pya.Polygon(pts))
 
-draw_circle(wafer_top, L_OUT, R)
-draw_circle(wafer_top, L_OUT, valid_R) # Dashed guide
+draw_wafer_shape(wafer_top, L_OUT, R, flat_y_level)
+# Draw dashed guide for valid area (just a circle is fine for check)
+# cell, layer, radius, num_points
+pts_valid = [pya.Point(um(valid_R * math.cos(2*math.pi*i/64)), 
+                       um(valid_R * math.sin(2*math.pi*i/64))) for i in range(64)]
+wafer_top.shapes(L_OUT).insert(pya.Polygon(pts_valid))
 
 # -------------------------------------------------
 # Dicing Mark Helper
 # -------------------------------------------------
 def draw_cross(cell, layer, x_center, y_center, size, width):
-    # Horizontal bar
     h_bar = pya.Box(
         um(x_center - size/2), um(y_center - width/2),
         um(x_center + size/2), um(y_center + width/2)
     )
-    # Vertical bar
     v_bar = pya.Box(
         um(x_center - width/2), um(y_center - size/2),
         um(x_center + width/2), um(y_center + size/2)
@@ -118,12 +151,16 @@ def draw_cross(cell, layer, x_center, y_center, size, width):
 # -------------------------------------------------
 # Tiling &amp; Placement
 # -------------------------------------------------
-# We use a set to track where we have placed dicing marks
-# to avoid drawing them multiple times at shared corners.
 placed_marks = set()
 
-def is_inside_valid_area(x, y, r_limit):
-    return (x*x + y*y) &lt;= (r_limit * r_limit)
+def is_inside_valid_area(x, y, r_limit, flat_y):
+    # Check Radius
+    if (x*x + y*y) &gt; (r_limit * r_limit):
+        return False
+    # Check Flat (assuming bottom flat)
+    if y &lt; flat_y + EDGE_EXCLUSION: # Keep margin from flat too
+        return False
+    return True
 
 # Grid range
 max_col = int(math.ceil(WAFER_DIA_UM / step_x_um))
@@ -131,56 +168,83 @@ max_row = int(math.ceil(WAFER_DIA_UM / step_y_um))
 
 placed_count = 0
 
+# -------------------------------------------------
+# Tiling &amp; Placement with ROBUST TEXT
+# -------------------------------------------------
+placed_marks = set()
+placed_count = 0
+
+generator = pya.TextGenerator.default_generator()
+
+# Text Parameters
+TEXT_SIZE = 25.0       # Height of the letters (in um)
+TEXT_LINE_WIDTH = 4.0  # Thickness of the stroke (in um)
+
 for i in range(-max_col, max_col + 1):
     for j in range(-max_row, max_row + 1):
         
-        # Center of the potential die
         cx = i * step_x_um
         cy = j * step_y_um
         
-        # Check if die fits in valid area
-        # (Checking 4 corners of the die itself)
-        # Note: We use the Die Dimensions, not the pitch, to check fit
         hw = die_w_um / 2.0
         hh = die_h_um / 2.0
         
-        # Simple check: if all 4 corners are inside
+        # Check if die fits
         corners_in = True
         for dx, dy in [(-hw, -hh), (hw, -hh), (-hw, hh), (hw, hh)]:
-            if not is_inside_valid_area(cx + dx, cy + dy, valid_R):
+            if not is_inside_valid_area(cx + dx, cy + dy, valid_R, flat_y_level):
                 corners_in = False
                 break
         
         if corners_in:
-            # 1. Place the Die
-            # Adjust origin to center the die at cx, cy
+            # 1. Place the Die (Centered)
             shift_x = cx - bbox.center().x * ly.dbu
             shift_y = cy - bbox.center().y * ly.dbu
             
             trans = pya.Trans(um(shift_x), um(shift_y))
             wafer_top.insert(pya.CellInstArray(die.cell_index(), trans))
-            wafer_top.insert(pya.CellInstArray(die.cell_index(), trans))
             placed_count += 1
             
-            # 2. Identify Corner Coordinates for Dicing Marks
-            # The scribe lines intersect at (cx ± step/2, cy ± step/2)
-            # These are the midpoints of the gaps.
+            # 2. Add Coordinate Label (ROBUST POLYGONS)
+            label_str = f"C{i} R{j}"
+            
+            # Target Location: X=0, Y=+90 (relative to die center)
+            # This places it exactly between the top two pads.
+            
+            # We create a transformation to move the text to (cx, cy + 90um)
+            # We scale the text by 0.001 because the generator works in 'design units' (often 1/dbu)
+            # but we want to specify size in um.
+            
+            # Generate the text region (polygons)
+            # .text(string, database_unit, scale_factor)
+            # We use a scale factor to set the text height
+            text_region = generator.text(label_str, ly.dbu, TEXT_SIZE)
+            
+            # The text comes out at (0,0). We need to move it to the die location.
+            # Center the text horizontally, move it up by 90um + cy
+            text_bbox = text_region.bbox()
+            text_width = text_bbox.width() * ly.dbu
+            
+            # Position: Centered at cx, and at Y = cy + 90um
+            t_text = pya.Trans(um(cx - text_width/2.0), um(cy + -10.0))
+            
+            # Apply transform and insert into Wafer Cell
+            # We must transform the region before inserting
+            text_region.transform(t_text)
+            wafer_top.shapes(L_METAL).insert(text_region)
+            
+            # 3. Dicing Marks
             mark_locs = [
-                (cx - step_x_um/2, cy - step_y_um/2), # Bottom-Left
-                (cx + step_x_um/2, cy - step_y_um/2), # Bottom-Right
-                (cx - step_x_um/2, cy + step_y_um/2), # Top-Left
-                (cx + step_x_um/2, cy + step_y_um/2)  # Top-Right
+                (cx - step_x_um/2, cy - step_y_um/2), 
+                (cx + step_x_um/2, cy - step_y_um/2), 
+                (cx - step_x_um/2, cy + step_y_um/2), 
+                (cx + step_x_um/2, cy + step_y_um/2)  
             ]
             
             for (mx, my) in mark_locs:
-                # Quantize coordinates to avoid float precision duplicates
-                # We round to nearest micron for the "key"
                 k = (int(round(mx)), int(round(my)))
-                
                 if k not in placed_marks:
-                    # Check if this mark is actually on the wafer
-                    # (We don't want marks floating in space off-wafer)
-                    if is_inside_valid_area(mx, my, WAFER_DIA_UM/2.0):
+                    if is_inside_valid_area(mx, my, R, flat_y_level):
                         draw_cross(wafer_top, L_METAL, mx, my, MARK_SIZE, MARK_WIDTH)
                         placed_marks.add(k)
 
@@ -188,16 +252,16 @@ for i in range(-max_col, max_col + 1):
 # Stats
 # -------------------------------------------------
 info_str = (f"Dies: {placed_count}\n"
-            f"Scribe: {SCRIBE_GAP}um\n"
-            f"Step X: {step_x_um:.1f}um\n"
-            f"Step Y: {step_y_um:.1f}um")
+            f"Step X/Y: {step_x_um:.1f} / {step_y_um:.1f}\n"
+            f"Flat Y: {flat_y_level:.1f}")
             
-t = pya.Text(info_str, pya.Trans(um(0), um(-valid_R + 8000)))
+t = pya.Text(info_str, pya.Trans(um(0), um(flat_y_level + 15000)))
 t.halign = 1
-t.size = um(1500)
+t.size = um(2000)
 wafer_top.shapes(L_TXT).insert(t)
 
 ly.write(OUT_GDS)
-print(f"Wafer with Dicing Marks generated: {OUT_GDS}")
-print(f"Total Dies: {placed_count}")</text>
+print(f"Wafer generated: {OUT_GDS}")
+print(f"Total Dies: {placed_count}")
+print(f"Flat Position: Y &lt; {flat_y_level:.2f} um")</text>
 </klayout-macro>
