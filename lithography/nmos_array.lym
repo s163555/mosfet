@@ -231,8 +231,8 @@ Ws = [20, 40, 60, 80]
 DX = 400.0
 DY = 400.0
 
-ORIGIN_X = 0
-ORIGIN_Y = 0
+ORIGIN_X = 200
+ORIGIN_Y = -200
 
 # Labels
 lbl_L = pya.Text("L -&gt;", pya.Trans(um(ORIGIN_X + DX), um(ORIGIN_Y + 200)))

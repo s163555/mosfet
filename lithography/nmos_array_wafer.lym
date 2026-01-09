@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description/>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <priority>0</priority>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>import pya
+import os
+import math
+
+# -------------------------------------------------
+# Configuration
+# -------------------------------------------------
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# Assumes the single-die file is named 'nmos_array_corrected.gds'
+SRC_GDS = os.path.join(script_dir, "nmos_array.gds")
+OUT_GDS = os.path.join(script_dir, "nmos_array_wafer.gds")
+
+# Wafer &amp; Dicing Specs
+WAFER_DIA_UM = 100000.0   # 100 mm
+EDGE_EXCLUSION = 3000.0   # 3 mm
+SCRIBE_GAP = 100.0        # Width of the street between dies
+
+# Dicing Mark Specs
+MARK_SIZE = 80.0          # Total length of the cross
+MARK_WIDTH = 10.0         # Thickness of the cross lines
+
+# -------------------------------------------------
+# Load Source
+# -------------------------------------------------
+if not os.path.exists(SRC_GDS):
+    raise FileNotFoundError(f"Could not find source file: {SRC_GDS}")
+
+ly = pya.Layout()
+ly.read(SRC_GDS)
+die = ly.top_cell()
+
+# -------------------------------------------------
+# Auto-detect Die Size
+# -------------------------------------------------
+bbox = die.bbox()
+die_w_dbu = bbox.width()
+die_h_dbu = bbox.height()
+
+die_w_um = die_w_dbu * ly.dbu
+die_h_um = die_h_dbu * ly.dbu
+
+print(f"Die Size: {die_w_um:.2f} x {die_h_um:.2f} µm")
+
+# The pitch (center-to-center distance)
+step_x_um = die_w_um + SCRIBE_GAP
+step_y_um = die_h_um + SCRIBE_GAP
+
+# -------------------------------------------------
+# Setup Wafer Cell
+# -------------------------------------------------
+wafer_top = ly.create_cell("WAFER_100MM")
+
+# Layers
+L_OUT   = ly.layer(90, 0)   # Wafer Outline
+L_TXT   = ly.layer(91, 0)   # Text Labels
+L_METAL = ly.layer(49, 0)   # Using Metal for Dicing Marks (High Contrast)
+
+def um(v): 
+    return int(round(v / ly.dbu))
+
+# 1. Draw Wafer Visuals
+R = WAFER_DIA_UM / 2.0
+valid_R = R - EDGE_EXCLUSION
+
+def draw_circle(cell, layer, radius, points=256):
+    pts = []
+    for i in range(points):
+        theta = 2 * math.pi * i / points
+        x = radius * math.cos(theta)
+        y = radius * math.sin(theta)
+        pts.append(pya.Point(um(x), um(y)))
+    cell.shapes(layer).insert(pya.Polygon(pts))
+
+draw_circle(wafer_top, L_OUT, R)
+draw_circle(wafer_top, L_OUT, valid_R) # Dashed guide
+
+# -------------------------------------------------
+# Dicing Mark Helper
+# -------------------------------------------------
+def draw_cross(cell, layer, x_center, y_center, size, width):
+    # Horizontal bar
+    h_bar = pya.Box(
+        um(x_center - size/2), um(y_center - width/2),
+        um(x_center + size/2), um(y_center + width/2)
+    )
+    # Vertical bar
+    v_bar = pya.Box(
+        um(x_center - width/2), um(y_center - size/2),
+        um(x_center + width/2), um(y_center + size/2)
+    )
+    cell.shapes(layer).insert(h_bar)
+    cell.shapes(layer).insert(v_bar)
+
+# -------------------------------------------------
+# Tiling &amp; Placement
+# -------------------------------------------------
+# We use a set to track where we have placed dicing marks
+# to avoid drawing them multiple times at shared corners.
+placed_marks = set()
+
+def is_inside_valid_area(x, y, r_limit):
+    return (x*x + y*y) &lt;= (r_limit * r_limit)
+
+# Grid range
+max_col = int(math.ceil(WAFER_DIA_UM / step_x_um))
+max_row = int(math.ceil(WAFER_DIA_UM / step_y_um))
+
+placed_count = 0
+
+for i in range(-max_col, max_col + 1):
+    for j in range(-max_row, max_row + 1):
+        
+        # Center of the potential die
+        cx = i * step_x_um
+        cy = j * step_y_um
+        
+        # Check if die fits in valid area
+        # (Checking 4 corners of the die itself)
+        # Note: We use the Die Dimensions, not the pitch, to check fit
+        hw = die_w_um / 2.0
+        hh = die_h_um / 2.0
+        
+        # Simple check: if all 4 corners are inside
+        corners_in = True
+        for dx, dy in [(-hw, -hh), (hw, -hh), (-hw, hh), (hw, hh)]:
+            if not is_inside_valid_area(cx + dx, cy + dy, valid_R):
+                corners_in = False
+                break
+        
+        if corners_in:
+            # 1. Place the Die
+            # Adjust origin to center the die at cx, cy
+            trans = pya.Trans(um(cx - hw), um(cy - hh))
+            wafer_top.insert(pya.CellInstArray(die.cell_index(), trans))
+            placed_count += 1
+            
+            # 2. Identify Corner Coordinates for Dicing Marks
+            # The scribe lines intersect at (cx ± step/2, cy ± step/2)
+            # These are the midpoints of the gaps.
+            mark_locs = [
+                (cx - step_x_um/2, cy - step_y_um/2), # Bottom-Left
+                (cx + step_x_um/2, cy - step_y_um/2), # Bottom-Right
+                (cx - step_x_um/2, cy + step_y_um/2), # Top-Left
+                (cx + step_x_um/2, cy + step_y_um/2)  # Top-Right
+            ]
+            
+            for (mx, my) in mark_locs:
+                # Quantize coordinates to avoid float precision duplicates
+                # We round to nearest micron for the "key"
+                k = (int(round(mx)), int(round(my)))
+                
+                if k not in placed_marks:
+                    # Check if this mark is actually on the wafer
+                    # (We don't want marks floating in space off-wafer)
+                    if is_inside_valid_area(mx, my, WAFER_DIA_UM/2.0):
+                        draw_cross(wafer_top, L_METAL, mx, my, MARK_SIZE, MARK_WIDTH)
+                        placed_marks.add(k)
+
+# -------------------------------------------------
+# Stats
+# -------------------------------------------------
+info_str = (f"Dies: {placed_count}\n"
+            f"Scribe: {SCRIBE_GAP}um\n"
+            f"Step X: {step_x_um:.1f}um\n"
+            f"Step Y: {step_y_um:.1f}um")
+            
+t = pya.Text(info_str, pya.Trans(um(0), um(-valid_R + 8000)))
+t.halign = 1
+t.size = um(1500)
+wafer_top.shapes(L_TXT).insert(t)
+
+ly.write(OUT_GDS)
+print(f"Wafer with Dicing Marks generated: {OUT_GDS}")
+print(f"Total Dies: {placed_count}")</text>
+</klayout-macro>
