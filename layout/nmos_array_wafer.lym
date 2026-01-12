@@ -23,7 +23,8 @@ import math
 # Configuration
 # -------------------------------------------------
 script_dir = os.path.dirname(os.path.abspath(__file__))
-SRC_GDS = os.path.join(script_dir, "nmos_array.gds")
+NMOS_ARRAY_GDS = os.path.join(script_dir, "nmos_array.gds")
+NMOS_REF_GDS = os.path.join(script_dir, "nmos_reference.gds")
 OUT_GDS = os.path.join(script_dir, "nmos_array_wafer.gds")
 
 # Wafer Specs (Siegert Wafer BW16029 - 150mm)
@@ -88,14 +89,65 @@ def generate_layer_properties(output_gds_path):
     print(f"Layer properties written to: {lyp_path}")
 
 # -------------------------------------------------
-# Load Source
+# Load Source (ROBUST)
 # -------------------------------------------------
-if not os.path.exists(SRC_GDS):
-    raise FileNotFoundError(f"Could not find source file: {SRC_GDS}")
-
 ly = pya.Layout()
-ly.read(SRC_GDS)
-die = ly.top_cell()
+
+# 1. Load Standard Array
+if not os.path.exists(NMOS_ARRAY_GDS):
+    raise FileNotFoundError(f"Could not find source file: {NMOS_ARRAY_GDS}")
+ly.read(NMOS_ARRAY_GDS)
+
+# Safely find the Standard Cell Object
+cell_std = ly.cell_by_name("NMOS_ARRAY")
+if cell_std is None:
+    # Fallback: Pick the first top cell found
+    print("Warning: 'NMOS_ARRAY' cell not found by name. Using the first top cell.")
+    cell_std = ly.top_cells()[0]
+
+# 2. Load Reference Die (Fat FET)
+if os.path.exists(NMOS_REF_GDS):
+    ly.read(NMOS_REF_GDS)
+    cell_ref = ly.cell_by_name("NMOS_FAT_FET")
+    
+    # Fallback: Find the new top cell that isn't the standard one
+    if cell_ref is None:
+        for tc in ly.top_cells():
+            if tc.cell_index() != cell_std.cell_index():
+                cell_ref = tc
+                break
+    if cell_ref is None:
+        print("Warning: Reference loaded but cell not found. Using Standard Array.")
+        cell_ref = cell_std
+else:
+    print("Warning: Reference GDS not found. Using Standard Array.")
+    cell_ref = cell_std
+
+# Set 'die' to the standard cell for pitch calculations
+die = cell_std
+
+# -------------------------------------------------
+# Auto-detect Die Size
+# -------------------------------------------------
+l_metal_idx = ly.layer(49, 0)
+
+# Check for INT vs OBJECT error
+if isinstance(die, int):
+    die = ly.cell(die) # Convert index back to object if needed
+
+bbox = die.bbox_per_layer(l_metal_idx)
+if bbox.empty():
+    print("Warning: No metal found, falling back to full bbox")
+    bbox = die.bbox()
+
+die_w_um = bbox.width() * ly.dbu
+die_h_um = bbox.height() * ly.dbu
+
+print(f"Die Size: {die_w_um:.2f} x {die_h_um:.2f} µm")
+
+# Pitch = Die Size + Scribe Lane
+step_x_um = die_w_um + SCRIBE_GAP
+step_y_um = die_h_um + SCRIBE_GAP
 
 # -------------------------------------------------
 # Auto-detect Die Size
@@ -223,6 +275,42 @@ generator = pya.TextGenerator.default_generator()
 TEXT_SIZE = 25.0       # Height of the letters (in um)
 TEXT_LINE_WIDTH = 4.0  # Thickness of the stroke (in um)
 
+# -------------------------------------------------
+# Reference Die Selection Logic
+# -------------------------------------------------
+def is_ref_die_location(col, row):
+    """
+    Returns True if the (col, row) index should be a Reference Die.
+    Strategy: 5-Point Map (Center + 4 Quadrants).
+    """
+    # 1. Center Die
+    if col == 0 and row == 0:
+        return True
+    
+    # 2. Quadrant Corners
+    ref_index = 25
+    if abs(col) == ref_index and abs(row) == ref_index:
+        return True
+        
+    return False
+
+# -------------------------------------------------
+# Main logic loop
+# -------------------------------------------------
+# --- SANITY CHECK: Ensure we have Objects, not Integers ---
+if isinstance(die, int): 
+    die = ly.cell(die)
+if isinstance(cell_ref, int): 
+    cell_ref = ly.cell(cell_ref)
+
+# --- PRE-CALCULATE INDICES (Fixes the AttributeError) ---
+std_idx = die.cell_index()
+ref_idx = cell_ref.cell_index()
+
+# Setup Text Generator
+generator = pya.TextGenerator.default_generator()
+TEXT_SIZE = 25.0
+
 for i in range(-max_col, max_col + 1):
     for j in range(-max_row, max_row + 1):
         
@@ -240,39 +328,40 @@ for i in range(-max_col, max_col + 1):
                 break
         
         if corners_in:
+            # --- SELECTION LOGIC ---
+            if is_ref_die_location(i, j):
+                # USE REFERENCE CELL
+                target_cell_idx = ref_idx     # Use pre-calculated index
+                target_cell_obj = cell_ref    # Use object for bbox
+                label_prefix = "REF "
+            else:
+                # USE STANDARD CELL
+                target_cell_idx = std_idx     # Use pre-calculated index
+                target_cell_obj = die         # Use object for bbox
+                label_prefix = ""
+
+            # Calculate centering based on the SPECIFIC cell object
+            place_bbox = target_cell_obj.bbox_per_layer(l_metal_idx)
+            if place_bbox.empty(): 
+                place_bbox = target_cell_obj.bbox()
+
+            place_center = place_bbox.center()
+
             # 1. Place the Die (Centered)
-            shift_x = cx - bbox.center().x * ly.dbu
-            shift_y = cy - bbox.center().y * ly.dbu
+            shift_x = cx - place_center.x * ly.dbu
+            shift_y = cy - place_center.y * ly.dbu
             
             trans = pya.Trans(um(shift_x), um(shift_y))
-            wafer_top.insert(pya.CellInstArray(die.cell_index(), trans))
+            wafer_top.insert(pya.CellInstArray(target_cell_idx, trans))
             placed_count += 1
             
-            # 2. Add Coordinate Label (ROBUST POLYGONS)
-            label_str = f"C{i} R{j}"
-            
-            # Target Location: X=0, Y=+90 (relative to die center)
-            # This places it exactly between the top two pads.
-            
-            # We create a transformation to move the text to (cx, cy + 90um)
-            # We scale the text by 0.001 because the generator works in 'design units' (often 1/dbu)
-            # but we want to specify size in um.
-            
-            # Generate the text region (polygons)
-            # .text(string, database_unit, scale_factor)
-            # We use a scale factor to set the text height
+            # 2. Add Coordinate Label
+            label_str = f"{label_prefix}C{i} R{j}"
             text_region = generator.text(label_str, ly.dbu, TEXT_SIZE)
+            text_w = text_region.bbox().width() * ly.dbu
             
-            # The text comes out at (0,0). We need to move it to the die location.
-            # Center the text horizontally, move it up by 90um + cy
-            text_bbox = text_region.bbox()
-            text_width = text_bbox.width() * ly.dbu
-            
-            # Position: Centered at cx, and at Y = cy + 90um
-            t_text = pya.Trans(um(cx - text_width/2.0), um(cy + -10.0))
-            
-            # Apply transform and insert into Wafer Cell
-            # We must transform the region before inserting
+            # Place label at top edge (Y + 90um)
+            t_text = pya.Trans(um(cx - text_w/2.0), um(cy + 90.0))
             text_region.transform(t_text)
             wafer_top.shapes(L_METAL).insert(text_region)
             
