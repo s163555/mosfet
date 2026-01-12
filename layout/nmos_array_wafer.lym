@@ -361,7 +361,7 @@ for i in range(-max_col, max_col + 1):
             text_w = text_region.bbox().width() * ly.dbu
             
             # Place label at top edge (Y + 90um)
-            t_text = pya.Trans(um(cx - text_w/2.0), um(cy + 90.0))
+            t_text = pya.Trans(um(cx - text_w/2.0), um(cy - 10.0))
             text_region.transform(t_text)
             wafer_top.shapes(L_METAL).insert(text_region)
             
