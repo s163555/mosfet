@@ -87,7 +87,6 @@ def draw_single_device(cell, cx, cy):
     px_off = (PAD_WIDTH + PAD_SPACING) / 2
     py_off = (PAD_HEIGHT + PAD_SPACING) / 2
     
-    # Pad centers relative to device center (cx, cy)
     pads = {
         "S": (cx - px_off, cy + py_off), 
         "D": (cx + px_off, cy + py_off),
@@ -111,9 +110,6 @@ def draw_single_device(cell, cx, cy):
 
     # 3. Connections
     cont_offset = L_REF/2 + 5.0 + 5.0 
-    
-    # Wire limits (relative to cy)
-    # Bottom of wire extends past active area bottom
     wire_bottom_y = cy - (act_h / 2.0) - 10.0 
 
     # --- SOURCE (Left) ---
@@ -153,20 +149,34 @@ def draw_single_device(cell, cx, cy):
         (tap_x, cy)
     ], 20)
 
-    # 4. Local Label
-    # We place a small label INSIDE the device area (between bottom pads)
-    # so it travels with the device.
+    # -------------------------------------------------
+    # 4. Local Label (3-Line, Above Device)
+    # -------------------------------------------------
     gen = pya.TextGenerator.default_generator()
-    text_size = 20.0 # Slightly smaller
-    label_y = cy - 120.0 # Between bottom pads
+    text_size = 25.0
+    line_spacing = 30.0
     
-    label_str = f"REF L={int(L_REF)}" # Keep it short
-    text = gen.text(label_str, layout.dbu, text_size)
+    # Target Y: Between top pads relative to THIS device
+    # Top pads are at cy + 175. Gap is roughly at cy + 150.
+    label_y_center = cy + 150.0
+
+    lines_to_draw = [
+        "REF", 
+        f"L={int(L_REF)}", 
+        f"W={int(W_REF)}"
+    ]
     
-    w = text.bbox().width() * layout.dbu
-    t_trans = pya.Trans(um(cx - w/2.0), um(label_y))
-    text.transform(t_trans)
-    cell.shapes(L_METAL).insert(text)
+    # Offsets: Top (+30), Middle (0), Bottom (-30)
+    y_offsets = [line_spacing, 0.0, -line_spacing]
+
+    for i, text_str in enumerate(lines_to_draw):
+        text_obj = gen.text(text_str, layout.dbu, text_size)
+        w = text_obj.bbox().width() * layout.dbu
+        
+        # Transform: Center X at cx, Y at label_y_center + offset
+        t_trans = pya.Trans(um(cx - w / 2.0), um(label_y_center + y_offsets[i]))
+        text_obj.transform(t_trans)
+        cell.shapes(L_METAL).insert(text_obj)
 
 # -------------------------------------------------
 # Generate 2x2 Array
