@@ -146,8 +146,6 @@ def draw_single_device(cell, cx, cy):
         (cx, g_y + 5)
     ], 20)
 
-    # --- BODY TAP REMOVED (Backside Contact) ---
-
     # -------------------------------------------------
     # 4. Local Label (3-Line, Above Device)
     # -------------------------------------------------

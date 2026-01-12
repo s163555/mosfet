@@ -54,8 +54,8 @@ LANDING_PAD_SIZE = 15.0
 WIRE_WIDTH = 15.0          
 
 # 2. Device Geometry
-ACTIVE_EXTENSION = 20.0    # Large extension to prevent S/D metal shorts 
-IMPLANT_ENCLOSURE = 5.0    # NEW: Implant extends 5um past Active on all sides
+ACTIVE_EXTENSION = 20.0
+IMPLANT_ENCLOSURE = 5.0
 
 POLY_EXT_ON_FIELD = 6.0    
 POLY_OVERHANG = 3.0        
@@ -102,14 +102,12 @@ def draw_nmos(cell, x0, y0, L, W):
         draw_box(cell, L_METAL, px, py, PAD_WIDTH, PAD_HEIGHT)
 
     # --- 2. Transistor Core ---
-    
     # A. Active Area (The actual silicon island)
     act_w = L + 2 * ACTIVE_EXTENSION
     act_h = W
     draw_box(cell, L_ACTIVE, x0, y0, act_w, act_h)
 
     # B. Implant Area (The N+ Doping mask)
-    # Must be larger than active to ensure full coverage despite misalignment
     imp_w = act_w + 2 * IMPLANT_ENCLOSURE
     imp_h = act_h + 2 * IMPLANT_ENCLOSURE
     draw_box(cell, L_IMPLANT, x0, y0, imp_w, imp_h)

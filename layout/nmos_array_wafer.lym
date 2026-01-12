@@ -89,7 +89,7 @@ def generate_layer_properties(output_gds_path):
     print(f"Layer properties written to: {lyp_path}")
 
 # -------------------------------------------------
-# Load Source (ROBUST)
+# Load Source
 # -------------------------------------------------
 ly = pya.Layout()
 
@@ -127,50 +127,45 @@ else:
 die = cell_std
 
 # -------------------------------------------------
-# Auto-detect Die Size
+# Auto-detect Die Sizes (Universal Grid)
 # -------------------------------------------------
 l_metal_idx = ly.layer(49, 0)
 
-# Check for INT vs OBJECT error
-if isinstance(die, int):
-    die = ly.cell(die) # Convert index back to object if needed
+def get_die_dim(cell_obj, layer_idx):
+    """Returns (width_um, height_um) based on Metal bbox"""
+    # Ensure we have an object
+    if isinstance(cell_obj, int): 
+        cell_obj = ly.cell(cell_obj)
+        
+    bbox = cell_obj.bbox_per_layer(layer_idx)
+    if bbox.empty():
+        bbox = cell_obj.bbox() # Fallback to full extent
+        
+    return (bbox.width() * ly.dbu, bbox.height() * ly.dbu)
 
-bbox = die.bbox_per_layer(l_metal_idx)
-if bbox.empty():
-    print("Warning: No metal found, falling back to full bbox")
-    bbox = die.bbox()
+# 1. Measure Standard Array
+std_w, std_h = get_die_dim(cell_std, l_metal_idx)
+print(f"Standard Array Size: {std_w:.2f} x {std_h:.2f} µm")
 
-die_w_um = bbox.width() * ly.dbu
-die_h_um = bbox.height() * ly.dbu
+# 2. Measure Reference Die
+ref_w, ref_h = get_die_dim(cell_ref, l_metal_idx)
+print(f"Reference Die Size:  {ref_w:.2f} x {ref_h:.2f} µm")
 
-print(f"Die Size: {die_w_um:.2f} x {die_h_um:.2f} µm")
+# 3. Determine Universal Grid Pitch
+# We must use the MAXIMUM dimension to ensure neither cell overlaps neighbors
+max_w = max(std_w, ref_w)
+max_h = max(std_h, ref_h)
 
-# Pitch = Die Size + Scribe Lane
-step_x_um = die_w_um + SCRIBE_GAP
-step_y_um = die_h_um + SCRIBE_GAP
+print(f"Planning Grid for:   {max_w:.2f} x {max_h:.2f} µm (Max)")
 
-# -------------------------------------------------
-# Auto-detect Die Size
-# -------------------------------------------------
-# Using Metal (49) to detect the true electrical boundary
-l_metal_idx = ly.layer(49, 0)
-bbox = die.bbox_per_layer(l_metal_idx)
+# Pitch = Max Die Size + Scribe Lane
+step_x_um = max_w + SCRIBE_GAP
+step_y_um = max_h + SCRIBE_GAP
 
-if bbox.empty():
-    print("Warning: No metal found, falling back to full bbox")
-    bbox = die.bbox()
-
-die_w_dbu = bbox.width()
-die_h_dbu = bbox.height()
-
-die_w_um = die_w_dbu * ly.dbu
-die_h_um = die_h_dbu * ly.dbu
-
-print(f"Die Size: {die_w_um:.2f} x {die_h_um:.2f} µm")
-
-# Pitch = Die Size + Scribe Lane
-step_x_um = die_w_um + SCRIBE_GAP
-step_y_um = die_h_um + SCRIBE_GAP
+# Update global die dimensions for the loop
+# (We use the max dimensions for centering logic to keep the grid uniform)
+die_w_um = max_w
+die_h_um = max_h
 
 # -------------------------------------------------
 # Setup Wafer Cell
@@ -264,7 +259,7 @@ max_row = int(math.ceil(WAFER_DIA_UM / step_y_um))
 placed_count = 0
 
 # -------------------------------------------------
-# Tiling &amp; Placement with ROBUST TEXT
+# Tiling &amp; Placement
 # -------------------------------------------------
 placed_marks = set()
 placed_count = 0
@@ -288,7 +283,7 @@ def is_ref_die_location(col, row):
         return True
     
     # 2. Quadrant Corners
-    ref_index = 25
+    ref_index = 20
     if abs(col) == ref_index and abs(row) == ref_index:
         return True
         
