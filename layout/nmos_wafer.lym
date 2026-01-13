@@ -19,6 +19,7 @@
 import os
 import math
 import sys
+import xml.etree.ElementTree as ET
 
 # -------------------------------------------------
 # Setup &amp; Import Helper
@@ -28,9 +29,53 @@ if script_dir not in sys.path:
     sys.path.append(script_dir)
 import layout_helper as h
 
+NMOS_ARRAY_LYM = os.path.join(script_dir, "nmos_array.lym")
+NMOS_REF_LYM   = os.path.join(script_dir, "nmos_reference.lym")
+
 NMOS_ARRAY_GDS = os.path.join(script_dir, "nmos_array.gds")
 NMOS_REF_GDS = os.path.join(script_dir, "nmos_reference.gds")
 OUT_GDS = os.path.join(script_dir, "nmos_wafer.gds")
+
+# -------------------------------------------------
+# AUTO-REGENERATE SOURCE FILES
+# -------------------------------------------------
+print("--- Starting Auto-Regeneration ---")
+
+def run_generator(script_path):
+    if not os.path.exists(script_path):
+        print(f"Warning: Script not found: {script_path}")
+        return
+
+    print(f"Reading generator: {os.path.basename(script_path)}...")
+    
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Check if it is a KLayout XML file (standard .lym format)
+        if content.strip().startswith("&lt;?xml") or "&lt;klayout-macro&gt;" in content:
+            try:
+                root = ET.fromstring(content)
+                text_node = root.find("text")
+                if text_node is not None and text_node.text:
+                    content = text_node.text
+                else:
+                    print(f"  -&gt; Error: No code found in &lt;text&gt; tag of {script_path}")
+                    return
+            except ET.ParseError as e:
+                print(f"  -&gt; XML Parse Error in {script_path}: {e}")
+                return
+
+        # Execute the extracted Python code
+        print(f"  -&gt; Executing...")
+        exec(content, {"__file__": script_path})
+        
+    except Exception as e:
+        print(f"  -&gt; Execution Failed: {e}")
+
+run_generator(NMOS_ARRAY_LYM)
+run_generator(NMOS_REF_LYM)
+print("--- Regeneration Complete ---\n")
 
 # -------------------------------------------------
 # Layer Definitions (Configuration Only)
