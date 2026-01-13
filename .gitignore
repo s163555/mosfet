@@ -41,8 +41,8 @@ __pycache__/
 # Silvaco TCAD (Future Proofing)
 # -------------------------------------------------------------------------
 # Silvaco generates many temp files. Here are common ones to ignore:
-*.str   # Structure files (binary output)
-*.set   # Settings files (sometimes generated)
+*.str
+*.set
 *.history
 *.runtime
 
