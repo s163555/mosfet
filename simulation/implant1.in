@@ -1,0 +1,67 @@
+go athena
+
+#TITLE: Comparison of Gauss, Pearson, SVDP and Monte Carlo methods
+
+
+line x loc = 0.0   spacing=0.25
+line x loc = 0.25  spacing=0.25
+line y loc = 0     spacing = 0.01 
+line y loc = 0.50  spacing = 0.01
+line y loc = 1.0  spacing = 0.5
+
+
+#initialize the mesh
+init silicon 
+
+#Gauss (symmetrical) implant (parameters are in std_tables)
+moments std_tables
+implant phos dose=1e14 energy=40 gauss print.mom
+
+struct outf=implant01_0.str
+
+line x loc = 0.0   spacing=0.25
+line x loc = 0.25  spacing=0.25
+line y loc = 0     spacing = 0.01 
+line y loc = 0.50  spacing = 0.01
+line y loc = 1.0  spacing = 0.5
+
+#initialize the mesh
+init silicon 
+
+#Use single Pearson (parameters are in std_tables)
+moments std_tables
+implant phos dose=1e14 energy=40 pearson print.mom
+
+struct outf=implant01_1.str
+
+line x loc = 0.0   spacing=0.25
+line x loc = 0.25  spacing=0.25
+line y loc = 0     spacing = 0.01 
+line y loc = 0.50  spacing = 0.01
+line y loc = 1.0  spacing = 0.5
+
+#initialize the mesh
+init silicon 
+
+#Use SVDP method (default)
+moments svdp_tables 
+implant phos dose=1e14 energy=40 print.mom
+
+struct outf=implant01_2.str
+
+line x loc = 0.0   spacing=0.25
+line x loc = 0.25  spacing=0.25
+line y loc = 0     spacing = 0.01 
+line y loc = 0.50  spacing = 0.01
+line y loc = 1.0  spacing = 0.5
+
+#initialize the mesh
+init silicon 
+
+#Use Monte Carlo method
+implant phos dose=1e14 energy=40 n.ion=500 monte
+struct outf=implant01_3.str
+
+tonyplot -overlay implant01_*.str
+
+quit
