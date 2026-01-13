@@ -2,6 +2,8 @@
 This repository contains the design files, process flow documentation, and TCAD simulations for the fabrication of N-channel enhancement-mode MOSFETs. The project integrates physical process planning with automated layout generation for Maskless Lithography (MLA).
 
 ![wafer](./wafer.png)
+![nmos_reference](./nmos_reference.png)
+![nmos_l6w40](./nmos_l6w40.png)
 
 ## Project Components
 * Process Flow: Detailed fabrication steps documented in LaTeX.
