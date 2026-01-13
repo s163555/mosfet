@@ -17,110 +17,98 @@
  <dsl-interpreter-name/>
  <text>import pya
 import os
+import sys
 
 # -------------------------------------------------
-# Configuration
+# Setup &amp; Import Helper
 # -------------------------------------------------
 script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.append(script_dir)
+
+import layout_helper as h
+
 OUTPUT_PATH = os.path.join(script_dir, "nmos_reference.gds")
 
 layout = pya.Layout()
 layout.dbu = 0.001
 top = layout.create_cell("NMOS_FAT_FET")
 
-def um(x): return int(x / layout.dbu)
-
-# Layers
+# -------------------------------------------------
+# Layers &amp; Config
+# -------------------------------------------------
 L_ACTIVE  = layout.layer(43, 0)
 L_IMPLANT = layout.layer(45, 0)
 L_POLY    = layout.layer(46, 0)
 L_CONT    = layout.layer(47, 0)
 L_METAL   = layout.layer(49, 0)
 
-# FAT FET Geometry
+# Geometry
 L_REF = 100.0
 W_REF = 100.0
-EXTENSION = 20.0
-IMPLANT_ENCLOSURE = 5.0  # NEW: Implant extends 5um past Active
+EXTENSION = 30.0 
+IMPLANT_ENCLOSURE = 5.0  
 
-# Contacts
-CONTACT_SIZE = 3.0       # NEW: Reduced to 3um
+# Contact Params
+CONT_SZ = 3.0
+CONT_SP = 3.0
+CONT_ENC = 2.0
 
 # Pads
 PAD_WIDTH = 100.0
 PAD_HEIGHT = 100.0
 PAD_SPACING = 250.0  
-
-# 2x2 Layout Settings
-QUADRANT_SHIFT_X = 350.0
-QUADRANT_SHIFT_Y = 350.0
+QUADRANT_SHIFT = 350.0
 
 # -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-def draw_box(cell, layer, x, y, w, h):
-    box = pya.Box(um(x - w/2), um(y - h/2), um(x + w/2), um(y + h/2))
-    cell.shapes(layer).insert(box)
-
-def draw_wire(cell, layer, points, width):
-    pya_pts = [pya.Point(um(x), um(y)) for x, y in points]
-    path = pya.Path(pya_pts, um(width))
-    cell.shapes(layer).insert(path)
-
-def draw_contact_array(cell, layer, x_center, y_center, fill_height, size=3.0, space=5.0):
-    pitch = size + space
-    n_contacts = int((fill_height + space) / pitch)
-    total_array_h = n_contacts * size + (n_contacts - 1) * space
-    start_y = y_center - total_array_h / 2.0 + size / 2.0
-    
-    for i in range(n_contacts):
-        cy = start_y + i * pitch
-        draw_box(cell, layer, x_center, cy, size, size)
-
-# -------------------------------------------------
-# The "Single Device" Generator
+# Single Device Generator
 # -------------------------------------------------
 def draw_single_device(cell, cx, cy):
-    """
-    Draws one complete Fat FET centered at (cx, cy)
-    """
-    # 1. Pads (Backside Contact Configuration)
+    
+    # 1. Pads
     px_off = (PAD_WIDTH + PAD_SPACING) / 2
     py_off = (PAD_HEIGHT + PAD_SPACING) / 2
     
     pads = {
-        "S": (cx - px_off, cy + py_off), # Top Left
-        "D": (cx + px_off, cy + py_off), # Top Right
-        "G": (cx, cy - py_off)           # Bottom Center (UPDATED)
-        # Pad B removed
+        "S": (cx - px_off, cy + py_off), 
+        "D": (cx + px_off, cy + py_off),
+        "G": (cx, cy - py_off)           
     }
     
     for p in pads.values():
-        draw_box(cell, L_METAL, p[0], p[1], PAD_WIDTH, PAD_HEIGHT)
+        h.draw_box(layout, cell, L_METAL, p[0], p[1], PAD_WIDTH, PAD_HEIGHT)
 
     # 2. Transistor Core
-    # A. Active
     act_w = L_REF + 2 * EXTENSION 
     act_h = W_REF
-    draw_box(cell, L_ACTIVE, cx, cy, act_w, act_h)
+    
+    poly_ext = 30.0
+    poly_h = W_REF + 2 * poly_ext
 
-    # B. Implant (Enlarged)
+    # Active &amp; Poly
+    h.draw_box(layout, cell, L_ACTIVE, cx, cy, act_w, act_h)
+    h.draw_box(layout, cell, L_POLY, cx, cy, L_REF, poly_h)
+
+    # Implant (Enclosed)
     imp_w = act_w + 2 * IMPLANT_ENCLOSURE
-    imp_h = act_h + 2 * IMPLANT_ENCLOSURE
-    draw_box(cell, L_IMPLANT, cx, cy, imp_w, imp_h)
-
-    # Poly (Vertical Gate)
-    poly_ext = 10.0
-    draw_box(cell, L_POLY, cx, cy, L_REF, W_REF + 2*poly_ext)
+    imp_h = poly_h + 2 * IMPLANT_ENCLOSURE
+    h.draw_box(layout, cell, L_IMPLANT, cx, cy, imp_w, imp_h)
 
     # 3. Connections
-    cont_offset = L_REF/2 + 5.0 + 5.0 
+    cont_offset = L_REF/2 + 15.0 
     wire_bottom_y = cy - (act_h / 2.0) - 10.0 
 
     # --- SOURCE (Left) ---
     s_x = cx - cont_offset
-    draw_contact_array(cell, L_CONT, s_x, cy, act_h - 10, size=CONTACT_SIZE)
-    draw_wire(cell, L_METAL, [
+    contact_strip_w = CONT_SZ + 2 * CONT_ENC
+    contact_strip_h = act_h - 10.0 
+    
+    # 1xN vertical array
+    h.fill_area_with_contacts(layout, cell, L_CONT, s_x, cy, 
+                              contact_strip_w, contact_strip_h, 
+                              CONT_SZ, CONT_SP, CONT_ENC)
+    
+    h.draw_wire(layout, cell, L_METAL, [
         (pads["S"][0], pads["S"][1]), 
         (s_x, pads["S"][1]), 
         (s_x, wire_bottom_y)
@@ -128,8 +116,11 @@ def draw_single_device(cell, cx, cy):
 
     # --- DRAIN (Right) ---
     d_x = cx + cont_offset
-    draw_contact_array(cell, L_CONT, d_x, cy, act_h - 10, size=CONTACT_SIZE)
-    draw_wire(cell, L_METAL, [
+    h.fill_area_with_contacts(layout, cell, L_CONT, d_x, cy, 
+                              contact_strip_w, contact_strip_h, 
+                              CONT_SZ, CONT_SP, CONT_ENC)
+    
+    h.draw_wire(layout, cell, L_METAL, [
         (pads["D"][0], pads["D"][1]), 
         (d_x, pads["D"][1]), 
         (d_x, wire_bottom_y)
@@ -137,53 +128,44 @@ def draw_single_device(cell, cx, cy):
 
     # --- GATE (Bottom) ---
     g_y = cy - W_REF/2 - poly_ext/2
-    draw_box(cell, L_CONT, cx, g_y, CONTACT_SIZE, CONTACT_SIZE) # 3x3 Contact
+
+    gate_contact_area = 15.0
+    h.fill_area_with_contacts(layout, cell, L_CONT, cx, g_y, 
+                              gate_contact_area, gate_contact_area, 
+                              CONT_SZ, CONT_SP, CONT_ENC)
     
-    # Wire straight up from Bottom Center Pad
-    draw_wire(cell, L_METAL, [
+    h.draw_wire(layout, cell, L_METAL, [
         (pads["G"][0], pads["G"][1]), 
         (cx, pads["G"][1]), 
         (cx, g_y + 5)
     ], 20)
 
-    # -------------------------------------------------
-    # 4. Local Label (3-Line, Above Device)
-    # -------------------------------------------------
+    # 4. Label
     gen = pya.TextGenerator.default_generator()
     text_size = 25.0
     line_spacing = 30.0
-    
-    # Target Y: Between top pads relative to THIS device
     label_y_center = cy + 150.0
-
-    lines_to_draw = [
-        "REF", 
-        f"L={int(L_REF)}", 
-        f"W={int(W_REF)}"
-    ]
-    
+    lines = ["REF", f"L={int(L_REF)}", f"W={int(W_REF)}"]
     y_offsets = [line_spacing, 0.0, -line_spacing]
 
-    for i, text_str in enumerate(lines_to_draw):
-        text_obj = gen.text(text_str, layout.dbu, text_size)
-        w = text_obj.bbox().width() * layout.dbu
-        t_trans = pya.Trans(um(cx - w / 2.0), um(label_y_center + y_offsets[i]))
-        text_obj.transform(t_trans)
-        cell.shapes(L_METAL).insert(text_obj)
+    for i, txt in enumerate(lines):
+        t_obj = gen.text(txt, layout.dbu, text_size)
+        w = t_obj.bbox().width() * layout.dbu
+        t_trans = pya.Trans(h.um(layout, cx - w/2), h.um(layout, label_y_center + y_offsets[i]))
+        t_obj.transform(t_trans)
+        cell.shapes(L_METAL).insert(t_obj)
 
 # -------------------------------------------------
-# Generate 2x2 Array
+# 2x2 Array Generation
 # -------------------------------------------------
 offsets = [
-    (-QUADRANT_SHIFT_X,  QUADRANT_SHIFT_Y),
-    ( QUADRANT_SHIFT_X,  QUADRANT_SHIFT_Y),
-    (-QUADRANT_SHIFT_X, -QUADRANT_SHIFT_Y),
-    ( QUADRANT_SHIFT_X, -QUADRANT_SHIFT_Y)
+    (-QUADRANT_SHIFT,  QUADRANT_SHIFT), ( QUADRANT_SHIFT,  QUADRANT_SHIFT),
+    (-QUADRANT_SHIFT, -QUADRANT_SHIFT), ( QUADRANT_SHIFT, -QUADRANT_SHIFT)
 ]
 
 for (ox, oy) in offsets:
     draw_single_device(top, ox, oy)
 
 layout.write(OUTPUT_PATH)
-print(f"2x2 Fat FET Array written to {OUTPUT_PATH}")</text>
+print(f"Reference written to {OUTPUT_PATH}")</text>
 </klayout-macro>

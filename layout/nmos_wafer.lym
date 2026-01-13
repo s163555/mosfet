@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description/>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <priority>0</priority>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>import pya
+import os
+import math
+import sys
+
+# -------------------------------------------------
+# Setup &amp; Import Helper
+# -------------------------------------------------
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.append(script_dir)
+import layout_helper as h
+
+NMOS_ARRAY_GDS = os.path.join(script_dir, "nmos_array.gds")
+NMOS_REF_GDS = os.path.join(script_dir, "nmos_reference.gds")
+OUT_GDS = os.path.join(script_dir, "nmos_wafer.gds")
+
+# -------------------------------------------------
+# Layer Definitions (Configuration Only)
+# -------------------------------------------------
+# Format: (Name, Layer, Datatype, HexColor, FillPattern)
+# Fill patterns: 1=Solid, 3=Slash, 5=Cross, etc.
+LAYERS_CONFIG = [
+    ("ACTIVE",   43, 0, "#0000FF", 1), # Blue
+    ("IMPLANT",  45, 0, "#00FF00", 5), # Green Empty
+    ("POLY",     46, 0, "#FF0000", 3), # Red Slash
+    ("CONTACT",  47, 0, "#000000", 1), # Black
+    ("METAL",    49, 0, "#CC8800", 1), # Gold
+    ("WAFER",    90, 0, "#808080", 5), # Gray Outline
+    ("TEXT",     91, 0, "#000000", 0)  # Text
+]
+
+# -------------------------------------------------
+# Wafer Specifications
+# -------------------------------------------------
+WAFER_DIA_UM = 150000.0   
+EDGE_EXCLUSION = 3000.0   
+SCRIBE_GAP = 100.0        
+
+FLAT_LENGTH_UM = 57500.0  
+FLAT_POSITION = "BOTTOM"  
+
+MARK_SIZE = 80.0          
+MARK_WIDTH = 10.0         
+LABEL_LAYER = 49          
+
+# -------------------------------------------------
+# Load Source
+# -------------------------------------------------
+ly = pya.Layout()
+
+# 1. Load Standard Array
+if not os.path.exists(NMOS_ARRAY_GDS):
+    raise FileNotFoundError(f"Missing source: {NMOS_ARRAY_GDS}")
+ly.read(NMOS_ARRAY_GDS)
+
+cell_std = ly.cell_by_name("NMOS_ARRAY")
+if cell_std is None:
+    print("Warning: 'NMOS_ARRAY' not found. Using first top cell.")
+    cell_std = ly.top_cells()[0]
+
+# 2. Load Reference Die
+if os.path.exists(NMOS_REF_GDS):
+    ly.read(NMOS_REF_GDS)
+    cell_ref = ly.cell_by_name("NMOS_FAT_FET")
+    if cell_ref is None:
+        for tc in ly.top_cells():
+            if tc.cell_index() != cell_std.cell_index():
+                cell_ref = tc
+                break
+    if cell_ref is None: cell_ref = cell_std
+else:
+    cell_ref = cell_std
+
+# -------------------------------------------------
+# Grid Planning (Max Dimensions)
+# -------------------------------------------------
+l_metal_idx = ly.layer(49, 0)
+
+def get_die_dim(cell_obj, layer_idx):
+    if isinstance(cell_obj, int): cell_obj = ly.cell(cell_obj)
+    bbox = cell_obj.bbox_per_layer(layer_idx)
+    if bbox.empty(): bbox = cell_obj.bbox()
+    return (bbox.width() * ly.dbu, bbox.height() * ly.dbu)
+
+std_w, std_h = get_die_dim(cell_std, l_metal_idx)
+ref_w, ref_h = get_die_dim(cell_ref, l_metal_idx)
+
+die_w_um = max(std_w, ref_w)
+die_h_um = max(std_h, ref_h)
+step_x_um = die_w_um + SCRIBE_GAP
+step_y_um = die_h_um + SCRIBE_GAP
+
+print(f"Grid Pitch: {step_x_um:.2f} x {step_y_um:.2f} µm")
+
+# -------------------------------------------------
+# Wafer Geometry Setup
+# -------------------------------------------------
+wafer_top = ly.create_cell("WAFER_150MM")
+L_OUT   = ly.layer(90, 0)
+L_TXT   = ly.layer(91, 0)
+L_METAL = ly.layer(LABEL_LAYER, 0) 
+
+# Flat Calculations
+R = WAFER_DIA_UM / 2.0
+valid_R = R - EDGE_EXCLUSION
+flat_half_len = FLAT_LENGTH_UM / 2.0
+dist_to_flat = math.sqrt(R*R - flat_half_len*flat_half_len)
+flat_y_level = -dist_to_flat
+
+def draw_wafer_shape(cell, layer, radius, flat_y):
+    pts = []
+    for i in range(360):
+        theta = 2 * math.pi * i / 360
+        x = radius * math.cos(theta)
+        y = radius * math.sin(theta)
+        if y &lt; flat_y: continue
+        pts.append(pya.Point(h.um(ly, x), h.um(ly, y)))
+    cell.shapes(layer).insert(pya.Polygon(pts))
+
+draw_wafer_shape(wafer_top, L_OUT, R, flat_y_level)
+pts_valid = [pya.Point(h.um(ly, valid_R * math.cos(2*math.pi*i/64)), 
+                       h.um(ly, valid_R * math.sin(2*math.pi*i/64))) for i in range(64)]
+wafer_top.shapes(L_OUT).insert(pya.Polygon(pts_valid))
+
+# -------------------------------------------------
+# Tiling Logic
+# -------------------------------------------------
+def is_inside_valid_area(x, y):
+    if (x*x + y*y) &gt; (valid_R * valid_R): return False
+    if y &lt; flat_y_level + EDGE_EXCLUSION: return False
+    return True
+
+def is_ref_die_location(col, row):
+    if col == 0 and row == 0: return True
+    if abs(col) == 20 and abs(row) == 20: return True
+    return False
+
+if isinstance(cell_std, int): cell_std = ly.cell(cell_std)
+if isinstance(cell_ref, int): cell_ref = ly.cell(cell_ref)
+std_idx = cell_std.cell_index()
+ref_idx = cell_ref.cell_index()
+
+max_col = int(math.ceil(WAFER_DIA_UM / step_x_um))
+max_row = int(math.ceil(WAFER_DIA_UM / step_y_um))
+
+placed_count = 0
+placed_marks = set()
+gen = pya.TextGenerator.default_generator()
+
+for i in range(-max_col, max_col + 1):
+    for j in range(-max_row, max_row + 1):
+        cx = i * step_x_um
+        cy = j * step_y_um
+        
+        hw, hh = die_w_um/2, die_h_um/2
+        corners_in = True
+        for dx, dy in [(-hw, -hh), (hw, -hh), (-hw, hh), (hw, hh)]:
+            if not is_inside_valid_area(cx + dx, cy + dy):
+                corners_in = False
+                break
+        
+        if corners_in:
+            if is_ref_die_location(i, j):
+                t_idx = ref_idx
+                t_obj = cell_ref
+                prefix = "REF "
+            else:
+                t_idx = std_idx
+                t_obj = cell_std
+                prefix = ""
+
+            bbox = t_obj.bbox_per_layer(l_metal_idx)
+            if bbox.empty(): bbox = t_obj.bbox()
+            center = bbox.center()
+            
+            trans = pya.Trans(h.um(ly, cx - center.x * ly.dbu), h.um(ly, cy - center.y * ly.dbu))
+            wafer_top.insert(pya.CellInstArray(t_idx, trans))
+            placed_count += 1
+            
+            label = f"{prefix}C{i} R{j}"
+            txt = gen.text(label, ly.dbu, 25.0)
+            tw = txt.bbox().width() * ly.dbu
+            txt.transform(pya.Trans(h.um(ly, cx - tw/2), h.um(ly, cy - 10.0)))
+            wafer_top.shapes(L_METAL).insert(txt)
+            
+            locs = [
+                (cx - step_x_um/2, cy - step_y_um/2), (cx + step_x_um/2, cy - step_y_um/2),
+                (cx - step_x_um/2, cy + step_y_um/2), (cx + step_x_um/2, cy + step_y_um/2)
+            ]
+            for mx, my in locs:
+                k = (int(round(mx)), int(round(my)))
+                if k not in placed_marks:
+                    if (mx*mx + my*my) &lt; (R*R) and my &gt; flat_y_level:
+                        h.draw_cross(ly, wafer_top, L_METAL, mx, my, MARK_SIZE, MARK_WIDTH)
+                        placed_marks.add(k)
+
+# -------------------------------------------------
+# Finalize
+# -------------------------------------------------
+info = f"Dies: {placed_count}\nPitch: {step_x_um:.1f}x{step_y_um:.1f}"
+t_info = pya.Text(info, pya.Trans(h.um(ly, 0), h.um(ly, flat_y_level + 15000)))
+t_info.halign = 1
+t_info.size = h.um(ly, 2000)
+wafer_top.shapes(L_TXT).insert(t_info)
+
+ly.write(OUT_GDS)
+
+# Generate Layers file using Helper
+lyp_path = OUT_GDS.replace(".gds", ".lyp")
+h.write_layer_properties(lyp_path, LAYERS_CONFIG)
+
+print(f"Wafer generated: {OUT_GDS} ({placed_count} dies)")</text>
+</klayout-macro>

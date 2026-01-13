@@ -17,27 +17,21 @@
  <dsl-interpreter-name/>
  <text>import pya
 import os
+import sys
 
-# -------------------------------------------------
-# Paths
-# -------------------------------------------------
+# Import Helper
 script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.append(script_dir)
+import layout_helper as h
+
 OUTPUT_PATH = os.path.join(script_dir, "nmos_array.gds")
 
-# -------------------------------------------------
-# Layout setup
-# -------------------------------------------------
 layout = pya.Layout()
-layout.dbu = 0.001  # 1 nm DBU
-
+layout.dbu = 0.001
 top = layout.create_cell("NMOS_ARRAY")
 
-def um(x):
-    return int(x / layout.dbu)
-
-# -------------------------------------------------
 # Layers
-# -------------------------------------------------
 L_ACTIVE  = layout.layer(43, 0)
 L_IMPLANT = layout.layer(45, 0)
 L_POLY    = layout.layer(46, 0)
@@ -45,167 +39,98 @@ L_CONT    = layout.layer(47, 0)
 L_METAL   = layout.layer(49, 0)
 L_TEXT    = layout.layer(100, 0)
 
-# -------------------------------------------------
-# Technology parameters (µm)
-# -------------------------------------------------
-# 1. Contact &amp; Enclosure
-CONTACT_SIZE = 3.0         
-LANDING_PAD_SIZE = 15.0    
-WIRE_WIDTH = 15.0          
+# Config
+CONT_SZ = 3.0
+CONT_SP = 3.0
+CONT_ENC = 2.0
+LANDING_PAD_SIZE = 15.0
+WIRE_WIDTH = 15.0
 
-# 2. Device Geometry
 ACTIVE_EXTENSION = 20.0
 IMPLANT_ENCLOSURE = 5.0
-
 POLY_EXT_ON_FIELD = 6.0    
 POLY_OVERHANG = 3.0        
 
-# 3. Pads
 PAD_WIDTH = 100.0
 PAD_HEIGHT = 100.0
 PAD_SPACING = 150.0 
 
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-def draw_box(cell, layer, x_center, y_center, w, h):
-    box = pya.Box(
-        um(x_center - w/2), um(y_center - h/2),
-        um(x_center + w/2), um(y_center + h/2)
-    )
-    cell.shapes(layer).insert(box)
-    return box
-
-def draw_wire(cell, layer, points, width):
-    pya_points = [pya.Point(um(x), um(y)) for x, y in points]
-    path = pya.Path(pya_points, um(width))
-    path.begin_ext = um(width / 2)
-    path.end_ext = um(width / 2)
-    cell.shapes(layer).insert(path)
-
-# -------------------------------------------------
-# NMOS DUT
-# -------------------------------------------------
 def draw_nmos(cell, x0, y0, L, W):
-    
-    # --- 1. Draw Probe Pads ---
-    px_offset = (PAD_WIDTH + PAD_SPACING) / 2
-    py_offset = (PAD_HEIGHT + PAD_SPACING) / 2
-    
+    # 1. Pads
+    px_off = (PAD_WIDTH + PAD_SPACING) / 2
+    py_off = (PAD_HEIGHT + PAD_SPACING) / 2
     pads = {
-        "S": (x0 - px_offset, y0 + py_offset), 
-        "D": (x0 + px_offset, y0 + py_offset), 
-        "G": (x0, y0 - py_offset)              
+        "S": (x0 - px_off, y0 + py_off), 
+        "D": (x0 + px_off, y0 + py_off), 
+        "G": (x0, y0 - py_off)              
     }
+    for p in pads.values():
+        h.draw_box(layout, cell, L_METAL, p[0], p[1], PAD_WIDTH, PAD_HEIGHT)
 
-    for name, (px, py) in pads.items():
-        draw_box(cell, L_METAL, px, py, PAD_WIDTH, PAD_HEIGHT)
-
-    # --- 2. Transistor Core ---
-    # A. Active Area (The actual silicon island)
-    act_w = L + 2 * ACTIVE_EXTENSION
-    act_h = W
-    draw_box(cell, L_ACTIVE, x0, y0, act_w, act_h)
-
-    # B. Implant Area (The N+ Doping mask)
-    imp_w = act_w + 2 * IMPLANT_ENCLOSURE
-    imp_h = act_h + 2 * IMPLANT_ENCLOSURE
-    draw_box(cell, L_IMPLANT, x0, y0, imp_w, imp_h)
-
-    # C. Poly Gate
+    # 2. Core
     poly_top = y0 + W/2 + POLY_OVERHANG
     poly_bot_edge = y0 - W/2 - POLY_EXT_ON_FIELD - LANDING_PAD_SIZE
     
-    poly_box = pya.Box(
-        um(x0 - L/2), um(poly_bot_edge),
-        um(x0 + L/2), um(poly_top)
-    )
+    act_w = L + 2 * ACTIVE_EXTENSION
+    act_h = W
+    h.draw_box(layout, cell, L_ACTIVE, x0, y0, act_w, act_h)
+
+    # Implant
+    imp_left = x0 - act_w/2 - IMPLANT_ENCLOSURE
+    imp_right = x0 + act_w/2 + IMPLANT_ENCLOSURE
+    imp_top = poly_top + IMPLANT_ENCLOSURE
+    imp_bottom = poly_bot_edge - IMPLANT_ENCLOSURE
+    # Using explicit box for asymmetrical implant
+    imp_box = pya.Box(h.um(layout, imp_left), h.um(layout, imp_bottom), 
+                      h.um(layout, imp_right), h.um(layout, imp_top))
+    cell.shapes(L_IMPLANT).insert(imp_box)
+
+    # Poly
+    poly_box = pya.Box(h.um(layout, x0 - L/2), h.um(layout, poly_bot_edge),
+                       h.um(layout, x0 + L/2), h.um(layout, poly_top))
     cell.shapes(L_POLY).insert(poly_box)
 
-    # --- 3. Connections ---
-
-    # A. GATE CONNECTION
-    g_cont_y = poly_bot_edge + LANDING_PAD_SIZE/2
-    g_cont_x = x0
+    # 3. Connections (Using Helper for Contacts)
     
+    # Gate
+    g_x, g_y = x0, poly_bot_edge + LANDING_PAD_SIZE/2
     if L &lt; LANDING_PAD_SIZE:
-        draw_box(cell, L_POLY, g_cont_x, g_cont_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+        h.draw_box(layout, cell, L_POLY, g_x, g_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+        
+    h.fill_area_with_contacts(layout, cell, L_CONT, g_x, g_y, 
+                              LANDING_PAD_SIZE, LANDING_PAD_SIZE, CONT_SZ, CONT_SP, CONT_ENC)
+    h.draw_box(layout, cell, L_METAL, g_x, g_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+    h.draw_wire(layout, cell, L_METAL, [(pads["G"][0], pads["G"][1]+PAD_HEIGHT/2), (g_x, g_y)], WIRE_WIDTH)
 
-    draw_box(cell, L_CONT, g_cont_x, g_cont_y, CONTACT_SIZE, CONTACT_SIZE)
-    draw_box(cell, L_METAL, g_cont_x, g_cont_y, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
-    
-    pg_x, pg_y = pads["G"]
-    draw_wire(cell, L_METAL, [
-        (pg_x, pg_y + PAD_HEIGHT/2), 
-        (g_cont_x, g_cont_y)         
-    ], WIRE_WIDTH)
+    # Source
+    s_x = x0 - L/2 - ACTIVE_EXTENSION/2
+    h.fill_area_with_contacts(layout, cell, L_CONT, s_x, y0, 
+                              LANDING_PAD_SIZE, LANDING_PAD_SIZE, CONT_SZ, CONT_SP, CONT_ENC)
+    h.draw_box(layout, cell, L_METAL, s_x, y0, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+    h.draw_wire(layout, cell, L_METAL, [(pads["S"][0], pads["S"][1]-PAD_HEIGHT/2), (pads["S"][0], y0), (s_x, y0)], WIRE_WIDTH)
 
+    # Drain
+    d_x = x0 + L/2 + ACTIVE_EXTENSION/2
+    h.fill_area_with_contacts(layout, cell, L_CONT, d_x, y0, 
+                              LANDING_PAD_SIZE, LANDING_PAD_SIZE, CONT_SZ, CONT_SP, CONT_ENC)
+    h.draw_box(layout, cell, L_METAL, d_x, y0, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
+    h.draw_wire(layout, cell, L_METAL, [(pads["D"][0], pads["D"][1]-PAD_HEIGHT/2), (pads["D"][0], y0), (d_x, y0)], WIRE_WIDTH)
 
-    # B. SOURCE CONNECTION
-    src_x = x0 - L/2 - ACTIVE_EXTENSION/2
-    
-    draw_box(cell, L_CONT, src_x, y0, CONTACT_SIZE, CONTACT_SIZE)
-    draw_box(cell, L_METAL, src_x, y0, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
-    
-    ps_x, ps_y = pads["S"]
-    draw_wire(cell, L_METAL, [
-        (ps_x, ps_y - PAD_HEIGHT/2), 
-        (ps_x, y0),                  
-        (src_x, y0)                  
-    ], WIRE_WIDTH)
+    # Label
+    gen = pya.TextGenerator.default_generator()
+    txt = gen.text(f"L={L} W={W}", layout.dbu, 12.0)
+    w = txt.bbox().width() * layout.dbu
+    txt.transform(pya.Trans(h.um(layout, x0 - w/2), h.um(layout, y0 + 120.0)))
+    cell.shapes(L_METAL).insert(txt)
 
-
-    # C. DRAIN CONNECTION
-    drn_x = x0 + L/2 + ACTIVE_EXTENSION/2
-    
-    draw_box(cell, L_CONT, drn_x, y0, CONTACT_SIZE, CONTACT_SIZE)
-    draw_box(cell, L_METAL, drn_x, y0, LANDING_PAD_SIZE, LANDING_PAD_SIZE)
-    
-    pd_x, pd_y = pads["D"]
-    draw_wire(cell, L_METAL, [
-        (pd_x, pd_y - PAD_HEIGHT/2), 
-        (pd_x, y0),                  
-        (drn_x, y0)                  
-    ], WIRE_WIDTH)
-
-    # D. LABEL
-    label_text = f"L={L} W={W}"
-    generator = pya.TextGenerator.default_generator()
-    text_region = generator.text(label_text, layout.dbu, 12.0)
-    
-    text_bbox = text_region.bbox()
-    text_width = text_bbox.width() * layout.dbu
-    t_text = pya.Trans(um(x0 - text_width/2.0), um(y0 + 120.0))
-    text_region.transform(t_text)
-    cell.shapes(L_METAL).insert(text_region)
-
-# -------------------------------------------------
-# Array Generation
-# -------------------------------------------------
+# Array Loop
 Ls = [4, 6, 8, 10]
 Ws = [20, 40, 60, 80]
-
-DX = 500.0 
-DY = 500.0
-
-ORIGIN_X = 0
-ORIGIN_Y = 0
-
-# Axis Labels
-lbl_L = pya.Text("L -&gt;", pya.Trans(um(ORIGIN_X + DX), um(ORIGIN_Y + 200)))
-lbl_L.height = um(30)
-top.shapes(L_TEXT).insert(lbl_L)
-
-lbl_W = pya.Text("W\n V", pya.Trans(um(ORIGIN_X - 350), um(ORIGIN_Y - DY)))
-lbl_W.height = um(30)
-top.shapes(L_TEXT).insert(lbl_W)
-
+DX, DY = 500.0, 500.0
 for row, W in enumerate(Ws):
     for col, L in enumerate(Ls):
-        x = ORIGIN_X + col * DX
-        y = ORIGIN_Y - row * DY
-        draw_nmos(top, x, y, L, W)
+        draw_nmos(top, col*DX, -row*DY, L, W)
 
 layout.write(OUTPUT_PATH)
-print(f"Layout written to {OUTPUT_PATH}")</text>
+print(f"Array written to {OUTPUT_PATH}")</text>
 </klayout-macro>
