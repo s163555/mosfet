@@ -2,6 +2,7 @@
 *.gds
 *.oas
 *.gds.gz
+*.lyp
 
 # KLayout backup files (often created during editing)
 *.lym~
