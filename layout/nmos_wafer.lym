@@ -111,6 +111,14 @@ step_y_um = die_h_um + SCRIBE_GAP
 print(f"Grid Pitch: {step_x_um:.2f} x {step_y_um:.2f} µm")
 
 # -------------------------------------------------
+# Create Hierarchical Dicing Mark Cell
+# -------------------------------------------------
+cell_mark = ly.create_cell("DICING_MARK")
+# Draw the cross ONCE centered at (0,0) in the mark cell
+h.draw_cross(ly, cell_mark, ly.layer(LABEL_LAYER, 0), 0, 0, MARK_SIZE, MARK_WIDTH)
+mark_idx = cell_mark.cell_index()
+
+# -------------------------------------------------
 # Wafer Geometry Setup
 # -------------------------------------------------
 wafer_top = ly.create_cell("WAFER_150MM")
@@ -209,7 +217,8 @@ for i in range(-max_col, max_col + 1):
                 k = (int(round(mx)), int(round(my)))
                 if k not in placed_marks:
                     if (mx*mx + my*my) &lt; (R*R) and my &gt; flat_y_level:
-                        h.draw_cross(ly, wafer_top, L_METAL, mx, my, MARK_SIZE, MARK_WIDTH)
+                        m_trans = pya.Trans(h.um(ly, mx), h.um(ly, my))
+                        wafer_top.insert(pya.CellInstArray(mark_idx, m_trans))
                         placed_marks.add(k)
 
 # -------------------------------------------------
