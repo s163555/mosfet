@@ -35,7 +35,7 @@ Status: In Development Future updates will include .in files to simulate:
 ## Repository Structure
 ```
 ├── layout/                    # KLayout Python macros and GDSII outputs
-│   ├── layout_helper.py
+│   ├── layout_helper.py       # Helper library for geometry and layout calculations
 │   ├── nmos_array.lym         # Source Macro: Generates the parametric 4x4 NMOS block (L/W variations)
 │   ├── nmos_reference.lym     # Source Macro: Generates the fat FET block (reference geometry)
 │   ├── nmos_wafer.lym         # Assembly Macro: Tiles the die onto a 150mm wafer with flat & labels
